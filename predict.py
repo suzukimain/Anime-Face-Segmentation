@@ -59,7 +59,7 @@ def convert_img(
     model_path: str = "model/UNet.pth",
     device: Optional[str] = None,
     resize: int = 512,
-    save_path: Optional[str] = None,
+    save_dir: Optional[str] = None,
 ) -> Any:
     """
     Run segmentation and return a colorized result as a numpy array (H, W, 3) uint8.
@@ -94,9 +94,19 @@ def convert_img(
     result = seg2img(seg.detach().cpu().numpy())  # (H, W, 3) uint8
 
     # Optional save
-    if save_path is not None:
+    if save_dir is not None:
         # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        os.makedirs(os.path.dirname(os.path.abspath(save_dir)), exist_ok=True)
+        base_path = os.path.join(save_dir, 'result.png')
+        if not os.path.exists(base_path):
+            save_path = base_path
+        else:
+            idx = 1
+            while True:
+                save_path = os.path.join(save_dir, f'result_{idx}.png')
+                if not os.path.exists(save_path):
+                    break
+                idx += 1
         cv.imwrite(save_path, result)
 
     return result

@@ -3,7 +3,7 @@ import os
 from PIL import Image
 from torch.utils.data import Dataset
 
-from util import img2seg, seg2img
+from util import img2seg
 
 class UNetDataset(Dataset):
     def __init__(self, img_path, seg_path, transform=None):
@@ -15,14 +15,18 @@ class UNetDataset(Dataset):
     def __getitem__(self, idx): 
         seg_path = self.seg_path_list[idx]
         seg = img2seg(seg_path)
-        if self.transform!=None:
+        if self.transform is not None:
             seg_tensor = self.transform(seg)
+        else:
+            seg_tensor = None
         
         file_name = os.path.basename(seg_path).rsplit('.')[0]
         img_path = self.img_path+'/'+file_name+'.jpg'
         img = Image.open(img_path)
-        if self.transform!=None:
+        if self.transform is not None:
             img_tensor = self.transform(img)
+        else:
+            img_tensor = None
             
         return img_tensor, seg_tensor
         

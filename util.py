@@ -1,16 +1,24 @@
 import cv2 as cv
-import glob
 import numpy as np
-import os
 
-COLOR_BACKGROUND = (0,255,255)
-COLOR_HAIR = (255,0,0)
-COLOR_EYE = (0,0,255)
-COLOR_MOUTH = (255,255,255)
-COLOR_FACE = (0,255,0)
-COLOR_SKIN = (255,255,0)
-COLOR_CLOTHES = (255,0,255)
-PALETTE = [COLOR_BACKGROUND,COLOR_HAIR,COLOR_EYE,COLOR_MOUTH,COLOR_FACE,COLOR_SKIN,COLOR_CLOTHES]
+COLOR_BACKGROUND = (255,255,0)   
+COLOR_HAIR       = (0,255,255)   
+COLOR_EYE        = (255,0,0)     
+COLOR_MOUTH      = (255,255,255) 
+COLOR_FACE       = (0,255,0)     
+COLOR_SKIN       = (0,0,255)     
+COLOR_CLOTHES    = (255,0,255)   
+
+PALETTE = [
+    COLOR_BACKGROUND,
+    COLOR_HAIR,
+    COLOR_EYE,
+    COLOR_MOUTH,
+    COLOR_FACE,
+    COLOR_SKIN,
+    COLOR_CLOTHES
+]
+
 
 def img2seg(path):
     src = cv.imread(path)

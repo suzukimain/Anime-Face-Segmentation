@@ -131,3 +131,4 @@ dmypy.json
 apply_fixes.ps1
 
 dataset/
+model/

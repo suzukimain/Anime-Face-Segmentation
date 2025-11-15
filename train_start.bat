@@ -25,8 +25,9 @@ REM Ensure model directory exists
 if not exist model mkdir model
 
 echo Starting training at %date% %time%
-REM Run training and save logs
-python -u train.py > train.log 2>&1
+REM Run training and both display stdout and save to train.log using PowerShell Tee-Object.
+REM Use the venv python executable directly so the environment is consistent.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
 set EXITCODE=%ERRORLEVEL%
 
 if %EXITCODE% neq 0 (

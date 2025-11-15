@@ -17,7 +17,10 @@ class UNetDataset(Dataset):
             
     def __getitem__(self, idx): 
         seg_path = self.seg_path_list[idx]
-        seg = img2seg(seg_path)
+        try:
+            seg = img2seg(seg_path)
+        except Exception as e:
+            raise RuntimeError(f"Failed to load segmentation file: {seg_path} -> {e}") from e
         if self.transform is not None:
             seg_tensor = self.transform(seg)
         else:
@@ -42,7 +45,10 @@ class UNetDataset(Dataset):
         if img_path is None:
             raise FileNotFoundError(f"Paired image for '{file_name}' not found in '{self.img_path}' (tried: {exts})")
 
-        img = Image.open(img_path).convert('RGB')
+        try:
+            img = Image.open(img_path).convert('RGB')
+        except Exception as e:
+            raise RuntimeError(f"Failed to load image file: {img_path} -> {e}") from e
         if self.transform is not None:
             img_tensor = self.transform(img)
         else:

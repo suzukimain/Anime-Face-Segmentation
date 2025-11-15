@@ -92,9 +92,14 @@ def train(epoch):
             scheduler.step()
         
         if batch_idx % 20 == 0:
+            # use get_last_lr() to avoid deprecated get_lr() warning
+            try:
+                lr = float(scheduler.get_last_lr()[0])
+            except Exception:
+                lr = float(scheduler.get_lr()[0])
             print('Train Epoch: {:>6} [{:>6}/{:>6} ({:>2}%)]\tLoss: {:.6f}\t\t lr: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
-                int(100. * batch_idx / len(train_loader)), loss.item() / len(data), float(scheduler.get_lr()[0])))
+                int(100. * batch_idx / len(train_loader)), loss.item() / len(data), lr))
     print('====> Epoch: {} Average loss: {:.8f}'.format(epoch, train_loss / len(train_loader.dataset)))
 
 def save_checkpoint(epoch, model, optimizer, scheduler, path):

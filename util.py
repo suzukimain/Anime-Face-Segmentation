@@ -22,6 +22,11 @@ def img2seg(path):
     src = cv.imread(path)
     if src is None:
         raise FileNotFoundError(f"Segmentation image not found or unreadable: {path}")
+    # Ensure the segmentation image has expected shape (H=512, W=512, C=3)
+    if src.ndim != 3 or src.shape[2] != 3:
+        raise ValueError(f"Segmentation image has unexpected channels: {path} shape={src.shape}")
+    if src.shape[0] != 512 or src.shape[1] != 512:
+        raise ValueError(f"Segmentation image has unexpected size: {path} shape={src.shape} (expected 512x512)")
     src = src.reshape(-1, 3)
     seg_list = []
     for color in PALETTE:

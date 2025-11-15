@@ -9,7 +9,10 @@ class UNetDataset(Dataset):
     def __init__(self, img_path, seg_path, transform=None):
             self.img_path = img_path
             self.seg_path = seg_path
-            self.seg_path_list = glob.glob(self.seg_path + '/*.*')
+            # collect segmentation files and sort for stable ordering
+            self.seg_path_list = sorted(glob.glob(os.path.join(self.seg_path, '*.*')))
+            if len(self.seg_path_list) == 0:
+                raise FileNotFoundError(f"No segmentation files found in: {self.seg_path}")
             self.transform = transform
             
     def __getitem__(self, idx): 

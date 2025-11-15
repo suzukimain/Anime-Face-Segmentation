@@ -20,6 +20,8 @@ PALETTE = [
 
 def img2seg(path):
     src = cv.imread(path)
+    if src is None:
+        raise FileNotFoundError(f"Segmentation image not found or unreadable: {path}")
     src = src.reshape(-1, 3)
     seg_list = []
     for color in PALETTE:

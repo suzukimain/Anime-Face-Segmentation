@@ -17,7 +17,7 @@ from util import seg2img
 ####################################################################
 # Constants and hyper parameters
 DATA_PATH  = './data/faces'
-SEG_PATH = '../data/segs'
+SEG_PATH = './data/segs'
 MODEL_PATH = './model'
 MODEL_NAME = 'UNet'
 CHECKPOINT_PATH = './model/checkpoint.pth'

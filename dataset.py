@@ -21,8 +21,25 @@ class UNetDataset(Dataset):
             seg_tensor = None
         
         file_name = os.path.basename(seg_path).rsplit('.')[0]
-        img_path = self.img_path+'/'+file_name+'.jpg'
-        img = Image.open(img_path)
+        # Support multiple image extensions for input images (.jpg, .jpeg, .png)
+        exts = ['.jpg', '.jpeg', '.png']
+        img_path = None
+        for ext in exts:
+            candidate = os.path.join(self.img_path, file_name + ext)
+            if os.path.exists(candidate):
+                img_path = candidate
+                break
+        # try uppercase extensions too (e.g. .JPG/.PNG)
+        if img_path is None:
+            for ext in [e.upper() for e in exts]:
+                candidate = os.path.join(self.img_path, file_name + ext)
+                if os.path.exists(candidate):
+                    img_path = candidate
+                    break
+        if img_path is None:
+            raise FileNotFoundError(f"Paired image for '{file_name}' not found in '{self.img_path}' (tried: {exts})")
+
+        img = Image.open(img_path).convert('RGB')
         if self.transform is not None:
             img_tensor = self.transform(img)
         else:

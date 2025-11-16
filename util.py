@@ -36,7 +36,26 @@ def img2seg(path):
     return dst.astype(np.float32)
 
 def seg2img(src):
-    src = np.moveaxis(src,0,2)
-    dst = [[PALETTE[np.argmax(val)] for val in buf]for buf in src]
-    
-    return np.array(dst).astype(np.uint8)
+    src = np.array(src)
+    # Accept either (C,H,W) or (H,W,C). Normalize to (H,W,C)
+    if src.ndim != 3:
+        raise ValueError(f"seg2img: expected 3D array, got shape {src.shape}")
+    if src.shape[0] == len(PALETTE):
+        # (C,H,W) -> (H,W,C)
+        src = np.moveaxis(src, 0, 2)
+    elif src.shape[2] == len(PALETTE):
+        # already (H,W,C)
+        pass
+    else:
+        raise ValueError(f"seg2img: unexpected channel count {src.shape} (palette size {len(PALETTE)})")
+
+    # src is now (H,W,C); pick class with highest score per pixel
+    class_idx = np.argmax(src, axis=2)
+    h, w = class_idx.shape
+    dst = np.zeros((h, w, 3), dtype=np.uint8)
+    for idx, color in enumerate(PALETTE):
+        mask = (class_idx == idx)
+        if np.any(mask):
+            dst[mask] = color
+
+    return dst

@@ -28,6 +28,9 @@ def _get_device(explicit: Optional[str] = None) -> torch.device:
 def _load_model(model_path: str, device: torch.device) -> UNet:
     model = UNet()
     state = torch.load(model_path, map_location=device)
+    # Handle both checkpoint dict (with 'model_state_dict') and plain state_dict
+    if isinstance(state, dict) and 'model_state_dict' in state:
+        state = state['model_state_dict']
     model.load_state_dict(state)
     model.to(device)
     model.eval()

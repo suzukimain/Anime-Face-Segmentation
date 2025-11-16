@@ -84,14 +84,29 @@ class UNet(nn.Module):
         e3 = self.en_block3(e2)
         e4 = self.en_block4(e3)
         
+        def _match_spatial(a, b):
+            """Resample tensor a to have same HxW as tensor b if needed."""
+            if a.shape[2:] != b.shape[2:]:
+                return F.interpolate(a, size=b.shape[2:], mode='nearest')
+            return a
+
         d4 = self.de_block4(e4)
-        c4 = torch.cat((d4,e3),1)
+        d4 = _match_spatial(d4, e3)
+        c4 = torch.cat((d4, e3), 1)
+
         d3 = self.de_block3(c4)
-        c3 = torch.cat((d3,e2),1)
+        d3 = _match_spatial(d3, e2)
+        c3 = torch.cat((d3, e2), 1)
+
         d2 = self.de_block2(c3)
-        c2 =torch.cat((d2,e1),1)
+        d2 = _match_spatial(d2, e1)
+        c2 = torch.cat((d2, e1), 1)
+
         d1 = self.de_block1(c2)
-        c1 = torch.cat((d1,e0),1)
+        d1 = _match_spatial(d1, e0)
+        c1 = torch.cat((d1, e0), 1)
+
+        # ensure c1 spatial matches expected for final decoder
         y = self.de_block0(c1)
-        
+
         return y

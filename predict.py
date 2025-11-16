@@ -59,6 +59,7 @@ def convert_img(
     model_path: str = "model/UNet.pth",
     device: Optional[str] = None,
     resize: int = 512,
+    save_path: Optional[str] = None,
     save_dir: Optional[str] = None,
 ) -> Any:
     """
@@ -70,6 +71,7 @@ def convert_img(
         device: Optional device string (e.g., "cuda" or "cpu"); automatically chosen if None.
         resize: Side length to resize the image to (square) before inference.
         save_path: If provided, save the resulting image to this path (format inferred from the file extension).
+        save_dir: (deprecated) If provided and `save_path` is None, save into this directory as `result.png` or `result_{n}.png`.
 
     Returns:
         numpy.ndarray: Color image of shape (resize, resize, 3) with dtype uint8.
@@ -93,21 +95,24 @@ def convert_img(
     # Postprocess to color image (numpy HWC uint8)
     result = seg2img(seg.detach().cpu().numpy())  # (H, W, 3) uint8
 
-    # Optional save
-    if save_dir is not None:
+    # Optional save: prefer explicit save_path, fallback to deprecated save_dir
+    if save_path is not None:
+        os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        cv.imwrite(save_path, result)
+    elif save_dir is not None:
         # Ensure directory exists
-        os.makedirs(os.path.dirname(os.path.abspath(save_dir)), exist_ok=True)
+        os.makedirs(os.path.abspath(save_dir), exist_ok=True)
         base_path = os.path.join(save_dir, 'result.png')
         if not os.path.exists(base_path):
-            save_path = base_path
+            out_path = base_path
         else:
             idx = 1
             while True:
-                save_path = os.path.join(save_dir, f'result_{idx}.png')
-                if not os.path.exists(save_path):
+                out_path = os.path.join(save_dir, f'result_{idx}.png')
+                if not os.path.exists(out_path):
                     break
                 idx += 1
-        cv.imwrite(save_path, result)
+        cv.imwrite(out_path, result)
 
     return result
 

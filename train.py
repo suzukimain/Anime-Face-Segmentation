@@ -39,13 +39,18 @@ transformer = transforms.Compose([
 # Load dataset
 total_dataset = UNetDataset(img_path=DATA_PATH,seg_path=SEG_PATH, transform=transformer)
 # Split train, validation, test
+# Compute split sizes so that any rounding remainder goes to the training set
 len_total = len(total_dataset)
-len_train = int(len_total * R_TRAIN); len_val = int(len_total * R_VAL); len_test = len_total - len_train - len_val
+R_TEST = 1.0 - R_TRAIN - R_VAL
+len_val = int(len_total * R_VAL)
+len_test = int(len_total * R_TEST)
+len_train = len_total - len_val - len_test
 train_dataset, validation_dataset, test_dataset = random_split(total_dataset, [len_train, len_val, len_test])
 # Build loaders
-train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=True)
-val_loader = DataLoader(validation_dataset, batch_size=VAL_BATCH_SIZE, shuffle=True, drop_last=True)
-test_loader = DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True, drop_last=True)
+# Do not drop the last (possibly smaller) batch so that all images are used per epoch
+train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=False)
+val_loader = DataLoader(validation_dataset, batch_size=VAL_BATCH_SIZE, shuffle=True, drop_last=False)
+test_loader = DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True, drop_last=False)
 # Build Model :: In: 3x512x512 -> Out: 6x512x512
 model = UNet()
 if torch.cuda.is_available():

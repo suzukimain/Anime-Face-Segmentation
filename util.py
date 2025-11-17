@@ -6,7 +6,8 @@ COLOR_HAIR       = (0,255,255)
 COLOR_EYE        = (255,0,0)     
 COLOR_MOUTH      = (255,255,255) 
 COLOR_FACE       = (0,255,0)     
-COLOR_BODY       = (0,0,255)     # Skin + Clothes combined
+COLOR_SKIN       = (0,0,255)     
+COLOR_CLOTHES    = (128,128,128) 
 
 PALETTE = [
     COLOR_BACKGROUND,
@@ -14,7 +15,8 @@ PALETTE = [
     COLOR_EYE,
     COLOR_MOUTH,
     COLOR_FACE,
-    COLOR_BODY
+    COLOR_SKIN,
+    COLOR_CLOTHES
 ]
 
 
@@ -31,7 +33,7 @@ def img2seg(path):
     seg_list = []
     for color in PALETTE:
         seg_list.append(np.where(np.all(src==color, axis=1), 1.0, 0.0))
-    dst = np.stack(seg_list,axis=1).reshape(512,512,6)
+    dst = np.stack(seg_list,axis=1).reshape(512,512,7)
     
     return dst.astype(np.float32)
 

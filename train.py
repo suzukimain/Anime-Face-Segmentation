@@ -51,7 +51,7 @@ train_dataset, validation_dataset, test_dataset = random_split(total_dataset, [l
 train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=False)
 val_loader = DataLoader(validation_dataset, batch_size=VAL_BATCH_SIZE, shuffle=True, drop_last=False)
 test_loader = DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True, drop_last=False)
-# Build Model :: In: 3x512x512 -> Out: 6x512x512
+# Build Model :: In: 3x512x512 -> Out: 7x512x512
 model = UNet()
 if torch.cuda.is_available():
     model.cuda()

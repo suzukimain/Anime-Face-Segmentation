@@ -9,6 +9,8 @@ import numpy as np
 import cv2 as cv
 from PIL import Image
 import os
+import glob
+import re
 
 from network import UNet
 from dataset import UNetDataset
@@ -111,6 +113,38 @@ else:
         except RuntimeError as e:
             print(f'Warning: Failed to load pretrained model: {e}')
             print('Starting with randomly initialized weights.')
+
+# Detect per-epoch saved models (e.g. model/UNet_ep{n}.pth) and resume from the latest if newer
+try:
+    ep_pattern = os.path.join(MODEL_PATH, MODEL_NAME + '_ep*.pth')
+    ep_files = glob.glob(ep_pattern)
+    max_epoch = -1
+    max_fp = None
+    for fp in ep_files:
+        m = re.search(r'_ep(\d+)\.pth$', fp)
+        if m:
+            try:
+                e = int(m.group(1))
+            except Exception:
+                continue
+            if e > max_epoch:
+                max_epoch = e
+                max_fp = fp
+    if max_epoch >= 0:
+        # Only override START_EPOCH if this epoch is newer than current START_EPOCH
+        if max_epoch + 1 > START_EPOCH:
+            try:
+                print(f'Found saved epoch model: {max_fp} (epoch {max_epoch}). Loading and resuming from next epoch {max_epoch+1}...')
+                state = torch.load(max_fp, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+                if isinstance(state, dict) and 'model_state_dict' in state:
+                    state = state['model_state_dict']
+                model.load_state_dict(state)
+                START_EPOCH = max_epoch + 1
+                print(f'Successfully loaded epoch {max_epoch}. START_EPOCH set to {START_EPOCH}.')
+            except Exception as e:
+                print(f'Warning: failed to load epoch model {max_fp}: {e}')
+except Exception:
+    pass
 
 def train(epoch):
     model.train()

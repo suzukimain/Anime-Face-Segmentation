@@ -11,6 +11,9 @@ from PIL import Image
 import os
 import glob
 import re
+import csv
+import json
+import time
 
 from network import UNet
 from dataset import UNetDataset
@@ -24,6 +27,8 @@ MODEL_PATH = './model'
 MODEL_NAME = 'UNet'
 CHECKPOINT_PATH = './model/checkpoint.pth'
 BASE_MODEL = ''  # 追加学習したい既存モデルのパス。未指定なら空文字のまま
+LOG_CSV = os.path.join(MODEL_PATH, 'train_history.csv')
+LOG_JSON = os.path.join(MODEL_PATH, 'train_history.json')
 
 INPUT_LEN = 512
 
@@ -35,8 +40,9 @@ TRAIN_BATCH_SIZE = 8
 VAL_BATCH_SIZE = 8
 TEST_BATCH_SIZE = 1
 
-R_TRAIN = 0.88; R_VAL = 0.07
-# Define image transformer (ImageNet normalization). Apply only to images in dataset.
+R_TRAIN = 0.88
+R_VAL = 0.07
+# Define transformer for images (ImageNet normalization + light color jitter)
 transformer = transforms.Compose([
             transforms.Resize(INPUT_LEN),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
@@ -44,7 +50,7 @@ transformer = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
 ])
-# Load dataset (applies transform to images only; masks are class indices)
+# Load dataset (transform applies to images only; dataset keeps train_mode flag)
 total_dataset = UNetDataset(img_path=DATA_PATH, seg_path=SEG_PATH, transform=transformer, train_mode=False)
 # Split train, validation, test
 # Compute split sizes so that any rounding remainder goes to the training set
@@ -61,6 +67,7 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
         self.base_dataset = base_dataset
         self.base_dataset.train_mode = True
     def __getitem__(self, idx):
+        # delegate to underlying subset which yields (img, mask)
         return self.subset[idx]
     def __len__(self):
         return len(self.subset)
@@ -170,6 +177,16 @@ except Exception:
 def train(epoch):
     model.train()
     train_loss = 0
+    # ensure log dir exists
+    os.makedirs(MODEL_PATH, exist_ok=True)
+    # init csv file with header if not exists
+    if not os.path.exists(LOG_CSV):
+        try:
+            with open(LOG_CSV, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['phase','epoch','batch_idx','processed','total_samples','loss','lr','timestamp'])
+        except Exception:
+            pass
     for batch_idx, data in enumerate(train_loader):
         img, seg_target = data
         img = img.cuda()
@@ -216,7 +233,7 @@ def save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, path)
     }, path)
     print(f'Checkpoint saved at epoch {epoch}')
     
-def validation():
+def validation(epoch):
     model.eval()
     val_loss= 0
     with torch.no_grad():
@@ -233,11 +250,37 @@ def validation():
         
     avg_val = val_loss / len(val_loader.dataset) if len(val_loader.dataset) > 0 else 0.0
     print('====> Test set loss: {:.8f}'.format(avg_val))
+    # log validation loss + current lr
+    try:
+        current_lr = float(optimizer.param_groups[0]['lr'])
+    except Exception:
+        current_lr = 0.0
+    try:
+        with open(LOG_CSV, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['val', int(epoch), '', '', int(len(val_loader.dataset)), float(avg_val), float(current_lr), time.time()])
+    except Exception:
+        pass
+    # also append to JSON (update last epoch entry if exists)
+    try:
+        if os.path.exists(LOG_JSON):
+            with open(LOG_JSON, 'r', encoding='utf-8') as jf:
+                history = json.load(jf)
+        else:
+            history = {'epochs': []}
+        if history.get('epochs'):
+            history['epochs'][-1].update({'val_loss': float(avg_val), 'lr': float(current_lr)})
+        else:
+            history.setdefault('epochs', []).append({'epoch': int(epoch), 'val_loss': float(avg_val), 'lr': float(current_lr)})
+        with open(LOG_JSON, 'w', encoding='utf-8') as jf:
+            json.dump(history, jf, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
     return avg_val
 
 for epoch in range(START_EPOCH, EPOCH):
     train(epoch)
-    val_loss = validation()
+    val_loss = validation(epoch)
     # Step CosineAnnealingWarmRestarts per-epoch
     scheduler.step()
     # Step ReduceLROnPlateau based on validation loss

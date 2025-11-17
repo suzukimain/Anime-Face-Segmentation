@@ -45,7 +45,7 @@ transformer = transforms.Compose([
             transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
 ])
 # Load dataset (applies transform to images only; masks are class indices)
-total_dataset = UNetDataset(img_path=DATA_PATH, seg_path=SEG_PATH, transform=transformer)
+total_dataset = UNetDataset(img_path=DATA_PATH, seg_path=SEG_PATH, transform=transformer, train_mode=False)
 # Split train, validation, test
 # Compute split sizes so that any rounding remainder goes to the training set
 len_total = len(total_dataset)
@@ -54,9 +54,20 @@ len_val = int(len_total * R_VAL)
 len_test = int(len_total * R_TEST)
 len_train = len_total - len_val - len_test
 train_dataset, validation_dataset, test_dataset = random_split(total_dataset, [len_train, len_val, len_test])
+# Enable train_mode for train_dataset by wrapping with augmentation-enabled dataset
+class TrainDatasetWrapper(torch.utils.data.Dataset):
+    def __init__(self, subset, base_dataset):
+        self.subset = subset
+        self.base_dataset = base_dataset
+        self.base_dataset.train_mode = True
+    def __getitem__(self, idx):
+        return self.subset[idx]
+    def __len__(self):
+        return len(self.subset)
+train_dataset_aug = TrainDatasetWrapper(train_dataset, total_dataset)
 # Build loaders
 # Do not drop the last (possibly smaller) batch so that all images are used per epoch
-train_loader = DataLoader(train_dataset, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=False)
+train_loader = DataLoader(train_dataset_aug, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=False)
 val_loader = DataLoader(validation_dataset, batch_size=VAL_BATCH_SIZE, shuffle=True, drop_last=False)
 test_loader = DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True, drop_last=False)
 # Build Model :: In: 3x512x512 -> Out: 7x512x512

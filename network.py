@@ -7,7 +7,7 @@ from torchvision.models import MobileNet_V2_Weights
 class UNet(nn.Module):
     def __init__(self):
         super(UNet, self).__init__()
-        self.NUM_SEG_CLASSES = 7 # Background, hair, eye, mouth, face, skin, clothes
+        self.NUM_SEG_CLASSES = 7 # Background, hair, face, clothes, skin, eye, mouth
         
         mobilenet_v2 = torchvision.models.mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
         mob_blocks = mobilenet_v2.features

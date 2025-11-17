@@ -1,22 +1,23 @@
 import cv2 as cv
 import numpy as np
 
-COLOR_BACKGROUND = (255,255,0)   
-COLOR_HAIR       = (0,255,255)   
-COLOR_EYE        = (255,0,0)     
-COLOR_MOUTH      = (255,255,255) 
-COLOR_FACE       = (0,255,0)     
-COLOR_SKIN       = (0,0,255)     
-COLOR_CLOTHES    = (128,128,128) 
+# Dataset color mapping (RGB format but stored as BGR in OpenCV)
+COLOR_BACKGROUND = (255, 255, 0)     # background - yellow
+COLOR_HAIR       = (19, 69, 139)     # hair - dark brown
+COLOR_FACE       = (144, 238, 144)   # face - light green
+COLOR_CLOTHES    = (255, 0, 0)       # clothes - blue
+COLOR_SKIN       = (180, 224, 255)   # skin - light peach
+COLOR_EYE        = (0, 255, 255)     # eye - yellow
+COLOR_MOUTH      = (0, 0, 255)       # mouth - red
 
 PALETTE = [
     COLOR_BACKGROUND,
     COLOR_HAIR,
-    COLOR_EYE,
-    COLOR_MOUTH,
     COLOR_FACE,
+    COLOR_CLOTHES,
     COLOR_SKIN,
-    COLOR_CLOTHES
+    COLOR_EYE,
+    COLOR_MOUTH
 ]
 
 

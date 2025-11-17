@@ -76,7 +76,10 @@ if torch.cuda.is_available():
     model.cuda()
 
 optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
-scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.98)
+# Cosine annealing with warm restarts: smooth decay and periodic restarts for better exploration
+scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
+# Backup: reduce LR on plateau (validation loss)
+scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
 criterion = nn.CrossEntropyLoss()
 
 # Prefer loading a BASE_MODEL for additional training if specified
@@ -113,6 +116,8 @@ elif os.path.exists(CHECKPOINT_PATH):
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if 'scheduler_plateau_state_dict' in checkpoint:
+            scheduler_plateau.load_state_dict(checkpoint['scheduler_plateau_state_dict'])
         START_EPOCH = checkpoint['epoch'] + 1
         print(f'Resuming training from epoch {START_EPOCH}')
     except RuntimeError as e:
@@ -200,13 +205,14 @@ def train(epoch):
     avg_loss = train_loss / len(train_loader.dataset) if len(train_loader.dataset) > 0 else 0.0
     print('====> Epoch: {} Average loss: {:.8f}'.format(epoch, avg_loss))
 
-def save_checkpoint(epoch, model, optimizer, scheduler, path):
+def save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, path):
     """Save training checkpoint"""
     torch.save({
         'epoch': epoch,
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict(),
         'scheduler_state_dict': scheduler.state_dict(),
+        'scheduler_plateau_state_dict': scheduler_plateau.state_dict(),
     }, path)
     print(f'Checkpoint saved at epoch {epoch}')
     
@@ -227,15 +233,18 @@ def validation():
         
     avg_val = val_loss / len(val_loader.dataset) if len(val_loader.dataset) > 0 else 0.0
     print('====> Test set loss: {:.8f}'.format(avg_val))
+    return avg_val
 
 for epoch in range(START_EPOCH, EPOCH):
     train(epoch)
-    validation()
-    # Step LR scheduler per-epoch
+    val_loss = validation()
+    # Step CosineAnnealingWarmRestarts per-epoch
     scheduler.step()
+    # Step ReduceLROnPlateau based on validation loss
+    scheduler_plateau.step(val_loss)
     
     # Save checkpoint every epoch
-    save_checkpoint(epoch, model, optimizer, scheduler, CHECKPOINT_PATH)
+    save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, CHECKPOINT_PATH)
     
     # Save model weights every epoch
     torch.save(model.state_dict(), MODEL_PATH+'/'+MODEL_NAME+f'_ep{epoch}'+'.pth')

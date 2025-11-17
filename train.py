@@ -63,18 +63,27 @@ criterion = nn.BCEWithLogitsLoss()
 # Load checkpoint if exists
 if os.path.exists(CHECKPOINT_PATH):
     print(f'Loading checkpoint from {CHECKPOINT_PATH}...')
-    checkpoint = torch.load(CHECKPOINT_PATH)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-    START_EPOCH = checkpoint['epoch'] + 1
-    print(f'Resuming training from epoch {START_EPOCH}')
+    try:
+        checkpoint = torch.load(CHECKPOINT_PATH)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        START_EPOCH = checkpoint['epoch'] + 1
+        print(f'Resuming training from epoch {START_EPOCH}')
+    except RuntimeError as e:
+        print(f'Warning: Failed to load checkpoint: {e}')
+        print('Model architecture mismatch detected. Starting training from scratch.')
+        START_EPOCH = 0
 else:
     print('No checkpoint found. Starting training from scratch.')
     # Load pretrained model if available (only when starting fresh)
     if os.path.exists('save/UNet.pth'):
-        model.load_state_dict(torch.load('save/UNet.pth'))
-        print('Loaded pretrained model from save/UNet.pth')
+        try:
+            model.load_state_dict(torch.load('save/UNet.pth'))
+            print('Loaded pretrained model from save/UNet.pth')
+        except RuntimeError as e:
+            print(f'Warning: Failed to load pretrained model: {e}')
+            print('Starting with randomly initialized weights.')
 
 def train(epoch):
     model.train()

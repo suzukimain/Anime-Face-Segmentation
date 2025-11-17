@@ -92,14 +92,16 @@ def train(epoch):
         img, seg_target = data
         img = img.cuda()
         seg_target = seg_target.cuda()
-        
+
         optimizer.zero_grad()
-        
+
         pred_seg = model(img)
         loss = criterion(pred_seg, seg_target)
-        
+
         loss.backward()
-        train_loss += loss.item()
+        # accumulate total loss over samples (for correct per-sample average)
+        batch_n = img.size(0)
+        train_loss += loss.item() * batch_n
         optimizer.step()
                 
         if batch_idx % 20 == 0:
@@ -111,10 +113,16 @@ def train(epoch):
                 lr = float(scheduler.get_last_lr()[0])
             except Exception:
                 lr = float(scheduler.get_lr()[0])
+            # show processed samples count (use (batch_idx+1)*batch_n to include current batch)
+            processed = (batch_idx + 1) * batch_n
+            total = len(train_loader.dataset)
+            percent = int(100. * processed / total) if total > 0 else 0
             print('Train Epoch: {:>6} [{:>6}/{:>6} ({:>2}%)]\tLoss: {:.6f}\t\t lr: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                int(100. * batch_idx / len(train_loader)), loss.item() / len(data), lr))
-    print('====> Epoch: {} Average loss: {:.8f}'.format(epoch, train_loss / len(train_loader.dataset)))
+                epoch, processed, total,
+                percent, loss.item(), lr))
+    # compute average loss per sample
+    avg_loss = train_loss / len(train_loader.dataset) if len(train_loader.dataset) > 0 else 0.0
+    print('====> Epoch: {} Average loss: {:.8f}'.format(epoch, avg_loss))
 
 def save_checkpoint(epoch, model, optimizer, scheduler, path):
     """Save training checkpoint"""
@@ -135,12 +143,14 @@ def validation():
             img = img.cuda()
             seg_target = seg_target.cuda()
             pred_seg = model(img)
-            
-            # sum up batch loss
-            val_loss += criterion(pred_seg, seg_target).item()
+
+            # sum up batch loss (per-sample)
+            batch_n = img.size(0)
+            val_loss += criterion(pred_seg, seg_target).item() * batch_n
             
         
-    print('====> Test set loss: {:.8f}'.format(val_loss / len(val_loader.dataset)))
+    avg_val = val_loss / len(val_loader.dataset) if len(val_loader.dataset) > 0 else 0.0
+    print('====> Test set loss: {:.8f}'.format(avg_val))
 
 for epoch in range(START_EPOCH, EPOCH):
     train(epoch)

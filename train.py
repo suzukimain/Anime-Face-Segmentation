@@ -21,6 +21,7 @@ SEG_PATH = './dataset/mask'
 MODEL_PATH = './model'
 MODEL_NAME = 'UNet'
 CHECKPOINT_PATH = './model/checkpoint.pth'
+BASE_MODEL = ''  # 追加学習したい既存モデルのパス。未指定なら空文字のまま
 
 INPUT_LEN = 512
 
@@ -60,8 +61,34 @@ optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.98)
 criterion = nn.BCEWithLogitsLoss()
 
-# Load checkpoint if exists
-if os.path.exists(CHECKPOINT_PATH):
+# Prefer loading a BASE_MODEL for additional training if specified
+if BASE_MODEL and os.path.exists(BASE_MODEL):
+    print(f'Loading base model from {BASE_MODEL} for additional training...')
+    try:
+        state = torch.load(BASE_MODEL, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+        if isinstance(state, dict) and 'model_state_dict' in state:
+            state = state['model_state_dict']
+        try:
+            model.load_state_dict(state)
+        except RuntimeError as e:
+            print(f'Warning: strict load failed ({e}). Retrying with strict=False...')
+            missing_unexpected = model.load_state_dict(state, strict=False)
+            try:
+                missing, unexpected = missing_unexpected  # PyTorch returns (missing, unexpected)
+                if missing:
+                    print(f'  Missing keys: {missing}')
+                if unexpected:
+                    print(f'  Unexpected keys: {unexpected}')
+            except Exception:
+                pass
+        START_EPOCH = 0
+        print('Base model loaded. Starting additional training from epoch 0.')
+    except Exception as e:
+        print(f'Warning: Failed to load base model: {e}')
+        print('Proceeding without base model (random initialization).')
+        START_EPOCH = 0
+elif os.path.exists(CHECKPOINT_PATH):
+    # Load checkpoint if exists (used when BASE_MODEL is not specified)
     print(f'Loading checkpoint from {CHECKPOINT_PATH}...')
     try:
         checkpoint = torch.load(CHECKPOINT_PATH)

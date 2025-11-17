@@ -79,7 +79,7 @@ optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
 # Cosine annealing with warm restarts: smooth decay and periodic restarts for better exploration
 scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
 # Backup: reduce LR on plateau (validation loss)
-scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
 criterion = nn.CrossEntropyLoss()
 
 # Prefer loading a BASE_MODEL for additional training if specified

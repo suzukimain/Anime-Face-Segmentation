@@ -50,13 +50,12 @@ class UNetDataset(Dataset):
     def __getitem__(self, idx): 
         img_path, seg_path = self.pairs[idx]
         try:
-            seg = img2seg(seg_path)
+            seg = img2seg(seg_path)  # (H,W) class indices
         except Exception as e:
             raise RuntimeError(f"Failed to load segmentation file: {seg_path} -> {e}") from e
-        if self.transform is not None:
-            seg_tensor = self.transform(seg)
-        else:
-            seg_tensor = None
+        # mask: convert to LongTensor without any normalization
+        import torch, numpy as np
+        seg_tensor = torch.from_numpy(seg.astype(np.int64))
 
         try:
             img = Image.open(img_path).convert('RGB')
@@ -65,7 +64,9 @@ class UNetDataset(Dataset):
         if self.transform is not None:
             img_tensor = self.transform(img)
         else:
-            img_tensor = None
+            # fallback minimal pipeline
+            from torchvision import transforms as _T
+            img_tensor = _T.ToTensor()(img)
 
         return img_tensor, seg_tensor
         

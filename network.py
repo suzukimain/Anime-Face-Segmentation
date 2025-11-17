@@ -71,10 +71,9 @@ class UNet(nn.Module):
             nn.Dropout(p=0.2)
         )
         
-        self.de_block0 = nn.Sequential(     # in_ch=16x2 out_ch=7
+        self.de_block0 = nn.Sequential(     # in_ch=16x2 out_ch=7 (logits)
             nn.UpsamplingNearest2d(scale_factor=2),
-            nn.Conv2d(16*2, self.NUM_SEG_CLASSES, kernel_size=3, padding=1),
-            nn.Softmax2d()
+            nn.Conv2d(16*2, self.NUM_SEG_CLASSES, kernel_size=3, padding=1)
         )
         
     def forward(self, x):

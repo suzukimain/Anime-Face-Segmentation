@@ -29,35 +29,34 @@ def img2seg(path):
         raise ValueError(f"Segmentation image has unexpected channels: {path} shape={src.shape}")
     if src.shape[0] != 512 or src.shape[1] != 512:
         raise ValueError(f"Segmentation image has unexpected size: {path} shape={src.shape} (expected 512x512)")
-    src = src.reshape(-1, 3)
-    seg_list = []
-    for color in PALETTE:
-        seg_list.append(np.where(np.all(src==color, axis=1), 1.0, 0.0))
-    dst = np.stack(seg_list,axis=1).reshape(512,512,7)
-    
-    return dst.astype(np.float32)
+    h, w, _ = src.shape
+    flat = src.reshape(-1, 3).astype(np.int16)
+    pal = np.array(PALETTE, dtype=np.int16)  # (K,3)
+    # Compute nearest palette color for every pixel to sanitize unexpected colors (e.g., glasses)
+    # distance^2 over RGB
+    d2 = ((flat[:, None, :] - pal[None, :, :]) ** 2).sum(axis=2)  # (N,K)
+    idx = d2.argmin(axis=1).reshape(h, w).astype(np.int64)
+    return idx
 
 def seg2img(src):
     src = np.array(src)
-    # Accept either (C,H,W) or (H,W,C). Normalize to (H,W,C)
-    if src.ndim != 3:
-        raise ValueError(f"seg2img: expected 3D array, got shape {src.shape}")
-    if src.shape[0] == len(PALETTE):
-        # (C,H,W) -> (H,W,C)
-        src = np.moveaxis(src, 0, 2)
-    elif src.shape[2] == len(PALETTE):
-        # already (H,W,C)
-        pass
+    # Accept logits/probs (C,H,W) or (H,W,C), or class indices (H,W)
+    if src.ndim == 2:
+        class_idx = src.astype(np.int64)
+    elif src.ndim == 3:
+        if src.shape[0] == len(PALETTE):
+            # (C,H,W) -> (H,W,C)
+            src = np.moveaxis(src, 0, 2)
+        if src.shape[2] != len(PALETTE):
+            raise ValueError(f"seg2img: unexpected channel count {src.shape} (palette size {len(PALETTE)})")
+        class_idx = np.argmax(src, axis=2)
     else:
-        raise ValueError(f"seg2img: unexpected channel count {src.shape} (palette size {len(PALETTE)})")
+        raise ValueError(f"seg2img: unexpected array shape {src.shape}")
 
-    # src is now (H,W,C); pick class with highest score per pixel
-    class_idx = np.argmax(src, axis=2)
     h, w = class_idx.shape
     dst = np.zeros((h, w, 3), dtype=np.uint8)
     for idx, color in enumerate(PALETTE):
         mask = (class_idx == idx)
         if np.any(mask):
             dst[mask] = color
-
     return dst

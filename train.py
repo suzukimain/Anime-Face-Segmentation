@@ -36,11 +36,16 @@ VAL_BATCH_SIZE = 8
 TEST_BATCH_SIZE = 1
 
 R_TRAIN = 0.88; R_VAL = 0.07
-# Define transformer
+# Define image transformer (ImageNet normalization). Apply only to images in dataset.
 transformer = transforms.Compose([
-            transforms.ToTensor(),])
-# Load dataset
-total_dataset = UNetDataset(img_path=DATA_PATH,seg_path=SEG_PATH, transform=transformer)
+            transforms.Resize(INPUT_LEN),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
+            transforms.RandomGrayscale(p=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
+])
+# Load dataset (applies transform to images only; masks are class indices)
+total_dataset = UNetDataset(img_path=DATA_PATH, seg_path=SEG_PATH, transform=transformer)
 # Split train, validation, test
 # Compute split sizes so that any rounding remainder goes to the training set
 len_total = len(total_dataset)
@@ -61,7 +66,7 @@ if torch.cuda.is_available():
 
 optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.98)
-criterion = nn.BCEWithLogitsLoss()
+criterion = nn.CrossEntropyLoss()
 
 # Prefer loading a BASE_MODEL for additional training if specified
 if BASE_MODEL and os.path.exists(BASE_MODEL):
@@ -165,8 +170,7 @@ def train(epoch):
         train_loss += loss.item() * batch_n
         optimizer.step()
                 
-        if batch_idx % 20 == 0:
-            scheduler.step()
+        # scheduler will step per-epoch (after validation)
         
         if batch_idx % 20 == 0:
             # use get_last_lr() to avoid deprecated get_lr() warning
@@ -216,6 +220,8 @@ def validation():
 for epoch in range(START_EPOCH, EPOCH):
     train(epoch)
     validation()
+    # Step LR scheduler per-epoch
+    scheduler.step()
     
     # Save checkpoint every epoch
     save_checkpoint(epoch, model, optimizer, scheduler, CHECKPOINT_PATH)

@@ -138,6 +138,8 @@ if __name__ == '__main__':
     parser.add_argument('--device', help='device to use (cuda or cpu)')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
+    parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
+    parser.add_argument('--resume', action='store_true', help='Resume training from the latest checkpoint')
     args = parser.parse_args()
     
     device = _get_device(args.device)
@@ -229,12 +231,14 @@ if __name__ == '__main__':
                     pass
             START_EPOCH = 0
             print('Base model loaded. Starting additional training from epoch 0.')
+            total_processed_images = 0
         except Exception as e:
             print(f'Warning: Failed to load base model: {e}')
             print('Proceeding without base model (random initialization).')
             START_EPOCH = 0
-    elif os.path.exists(CHECKPOINT_PATH):
-        # Load checkpoint if exists (used when BASE_MODEL is not specified)
+            total_processed_images = 0
+    elif os.path.exists(CHECKPOINT_PATH) and args.resume:
+        # Load checkpoint if exists and --resume flag is set
         print(f'Loading checkpoint from {CHECKPOINT_PATH}...')
         try:
             checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
@@ -244,12 +248,15 @@ if __name__ == '__main__':
             if 'scheduler_plateau_state_dict' in checkpoint:
                 scheduler_plateau.load_state_dict(checkpoint['scheduler_plateau_state_dict'])
             START_EPOCH = checkpoint['epoch'] + 1
-            print(f'Resuming training from epoch {START_EPOCH}')
+            total_processed_images = checkpoint.get('processed_images', 0)
+            print(f'Resuming training from epoch {START_EPOCH} (total processed: {total_processed_images} images)')
         except RuntimeError as e:
             print(f'Warning: Failed to load checkpoint: {e}')
             print('Model architecture mismatch detected. Starting training from scratch.')
             START_EPOCH = 0
+            total_processed_images = 0
     else:
+        total_processed_images = 0
         print('No checkpoint found. Starting training from scratch.')
         # Load pretrained model if available (only when starting fresh)
         if os.path.exists('save/UNet.pth'):
@@ -292,7 +299,8 @@ if __name__ == '__main__':
     except Exception:
         pass
     
-    def train(epoch):
+    def train(epoch, processed_images_counter):
+        """Train for one epoch and return updated processed_images_counter"""
         model.train()
         train_loss = 0
         # ensure log dir exists
@@ -320,6 +328,14 @@ if __name__ == '__main__':
             batch_n = img.size(0)
             train_loss += loss.item() * batch_n
             optimizer.step()
+            
+            # Update processed images counter
+            processed_images_counter += batch_n
+            
+            # Save periodic checkpoint every N images
+            if args.checkpoint_interval > 0 and processed_images_counter % args.checkpoint_interval < batch_n:
+                checkpoint_path = os.path.join(MODEL_PATH, f'checkpoint_{processed_images_counter}.pth')
+                save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, checkpoint_path, processed_images_counter)
                     
             # scheduler will step per-epoch (after validation)
             
@@ -333,23 +349,25 @@ if __name__ == '__main__':
                 processed = (batch_idx + 1) * batch_n
                 total = len(train_loader.dataset)
                 percent = int(100. * processed / total) if total > 0 else 0
-                print('Train Epoch: {:>6} [{:>6}/{:>6} ({:>2}%)]\tLoss: {:.6f}\t\t lr: {:.6f}'.format(
+                print('Train Epoch: {:>6} [{:>6}/{:>6} ({:>2}%)]\tLoss: {:.6f}\t\t lr: {:.6f}  [Total: {}]'.format(
                     epoch, processed, total,
-                    percent, loss.item(), lr))
+                    percent, loss.item(), lr, processed_images_counter))
         # compute average loss per sample
         avg_loss = train_loss / len(train_loader.dataset) if len(train_loader.dataset) > 0 else 0.0
         print('====> Epoch: {} Average loss: {:.8f}'.format(epoch, avg_loss))
+        return processed_images_counter
     
-    def save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, path):
-        """Save training checkpoint"""
+    def save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, path, processed_images=0):
+        """Save training checkpoint with processed images counter"""
         torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'scheduler_plateau_state_dict': scheduler_plateau.state_dict(),
+            'processed_images': processed_images,
         }, path)
-        print(f'Checkpoint saved at epoch {epoch}')
+        print(f'Checkpoint saved at epoch {epoch} (total processed: {processed_images} images)')
         
     def validation(epoch):
         model.eval()
@@ -426,7 +444,7 @@ if __name__ == '__main__':
             print(f'Failed saving epoch sample for {image_path} at epoch {epoch}: {e}')
     
     for epoch in range(START_EPOCH, EPOCH):
-        train(epoch)
+        total_processed_images = train(epoch, total_processed_images)
         val_loss = validation(epoch)
         # Step CosineAnnealingWarmRestarts per-epoch
         scheduler.step()
@@ -434,7 +452,7 @@ if __name__ == '__main__':
         scheduler_plateau.step(val_loss)
         
         # Save checkpoint every epoch
-        save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, CHECKPOINT_PATH)
+        save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, CHECKPOINT_PATH, total_processed_images)
         
         # Save model weights every epoch
         torch.save(model.state_dict(), MODEL_PATH+'/'+MODEL_NAME+f'_ep{epoch}'+'.pth')

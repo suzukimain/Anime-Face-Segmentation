@@ -14,6 +14,7 @@ import re
 import csv
 import json
 import time
+import contextlib
 
 from network import UNet
 from dataset import UNetDataset
@@ -151,16 +152,21 @@ if __name__ == '__main__':
     device = _get_device(args.device)
     # Enable mixed precision training for faster GPU computation
     use_amp = device.type == 'cuda'
-    # Use the new torch.amp.GradScaler API to avoid deprecation warnings
+    # Initialize AMP scaler and autocast compatibly across PyTorch versions
     if use_amp:
-        # Prefer the new torch.amp.GradScaler when available (silences FutureWarning).
         try:
             scaler = torch.amp.GradScaler(device='cuda')
         except Exception:
-            # Fall back to the older names if running on older PyTorch
-            scaler = torch.amp.GradScaler(device='cuda')
+            scaler = torch.cuda.amp.GradScaler()
+        # autocast compatibility: prefer new API but fall back if not present
+        try:
+            def autocast():
+                return torch.amp.autocast(device_type='cuda')
+        except Exception:
+            autocast = torch.cuda.amp.autocast
     else:
         scaler = None
+        autocast = contextlib.nullcontext
     
     if device.type == 'cuda':
         # Enable CuDNN benchmark to select best conv algorithms; improves throughput for fixed input sizes (512x512)
@@ -395,7 +401,7 @@ if __name__ == '__main__':
     
             # Use automatic mixed precision if enabled
             if use_amp_flag:
-                with torch.cuda.amp.autocast():
+                with autocast():
                     pred_seg = model(img)
                     loss = criterion(pred_seg, seg_target)
                 amp_scaler.scale(loss).backward()

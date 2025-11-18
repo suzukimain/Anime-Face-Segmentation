@@ -77,6 +77,13 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
         return len(self.indices) * self.multiplier
 
     def __getitem__(self, idx):
+        # Import all dependencies at the start to avoid UnboundLocalError
+        import random
+        import numpy as np
+        from PIL import Image as PILImage
+        from torchvision.transforms import functional as TF
+        from torchvision.transforms.functional import InterpolationMode
+        
         # map virtual idx to underlying subset index and variant
         real_subset_idx = idx // self.multiplier
         aug_variant = idx % self.multiplier
@@ -85,21 +92,10 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
         orig_idx = self.indices[real_subset_idx]
 
         # Retrieve original image/mask paths from base dataset
-        # Note: subset.dataset is the base dataset. orig_idx is an index into the base dataset
         img_path, seg_path = self.base_dataset.pairs[orig_idx]
-        # `img` is a PIL or tensor depending on transform; `seg` is a long tensor (H,W)
-        # We must re-open image/mask from paths to apply PIL operations if transform already applied.
-        # However our base subset returns already transformed image (ToTensor + Normalize),
-        # so reloading is needed. We'll fetch path from base dataset pairs to reapply transform after augmentation.
-
-        # Get file paths
-        img_path, seg_path = self.base_dataset.pairs[orig_idx]
-        from PIL import Image as PILImage
+        
+        # Load image and mask
         img_pil = PILImage.open(img_path).convert('RGB')
-        from torchvision.transforms import functional as TF
-        # Convert seg to PIL to apply geometric aug
-        import numpy as np
-        from PIL import Image as PILImage
         # use shared util.img2seg to convert mask image into class indices
         seg_np = img2seg(seg_path)
         seg_pil = PILImage.fromarray(seg_np.astype(np.uint8))
@@ -112,15 +108,12 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
                 seg_pil = TF.hflip(seg_pil)
         if aug_variant == 2:
             # Rotation for variant 2
-            import random
             angle = random.uniform(-15, 15)
-            from torchvision.transforms.functional import InterpolationMode
             img_pil = TF.rotate(img_pil, angle, interpolation=InterpolationMode.BILINEAR)
             seg_pil = TF.rotate(seg_pil, angle, interpolation=InterpolationMode.NEAREST)
         if aug_variant == 3:
             img_pil = TF.vflip(img_pil)
             seg_pil = TF.vflip(seg_pil)
-            import random
             translate = (random.randint(-20, 20), random.randint(-20, 20))
             scale = random.uniform(0.9, 1.1)
             shear = random.uniform(-5, 5)
@@ -283,7 +276,7 @@ if __name__ == '__main__':
                 if e > max_epoch:
                     max_epoch = e
                     max_fp = fp
-        if max_epoch >= 0:
+        if max_epoch >= 0 and max_fp:
             # Only override START_EPOCH if this epoch is newer than current START_EPOCH
             if max_epoch + 1 > START_EPOCH:
                 try:

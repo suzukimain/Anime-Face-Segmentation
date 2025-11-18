@@ -64,6 +64,7 @@ R_VAL = 0.07
 parser = argparse.ArgumentParser()
 parser.add_argument('--device', help='device to use (cuda or cpu)')
 parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
+parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
 args = parser.parse_args()
 
 device = _get_device(args.device)
@@ -75,6 +76,12 @@ transformer = transforms.Compose([
             transforms.Resize(INPUT_LEN),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
             transforms.RandomGrayscale(p=0.1),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
+])
+# Deterministic transform for evaluation / saving sample outputs (no color jitter or randomness)
+eval_transform = transforms.Compose([
+            transforms.Resize(INPUT_LEN),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
 ])
@@ -393,6 +400,35 @@ def validation(epoch):
         pass
     return avg_val
 
+
+def save_epoch_sample(epoch: int, image_path: str):
+    """Run model inference on a single image and save a colorized segmentation into a folder named '<epoch+1>epoch'.
+
+    Example: epoch=0 and image_path='./Hoshino.webp' -> './1epoch/Hoshino.png'
+    """
+    if not image_path:
+        return
+    try:
+        # prepare output directory
+        out_dir = os.path.join('.', f'{epoch+1}epoch')
+        os.makedirs(out_dir, exist_ok=True)
+
+        img_pil = Image.open(image_path).convert('RGB')
+        inp = eval_transform(img_pil).unsqueeze(0).to(device)
+        model.eval()
+        with torch.no_grad():
+            pred = model(inp)
+            # convert to class indices
+            pred_idx = pred.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
+            vis = seg2img(pred_idx)
+            # vis is expected as HxWx3 RGB uint8
+            out_name = os.path.splitext(os.path.basename(image_path))[0] + '.png'
+            out_path = os.path.join(out_dir, out_name)
+            Image.fromarray(vis).save(out_path)
+            print(f'Saved epoch sample to {out_path}')
+    except Exception as e:
+        print(f'Failed saving epoch sample for {image_path} at epoch {epoch}: {e}')
+
 for epoch in range(START_EPOCH, EPOCH):
     train(epoch)
     val_loss = validation(epoch)
@@ -406,6 +442,9 @@ for epoch in range(START_EPOCH, EPOCH):
     
     # Save model weights every epoch
     torch.save(model.state_dict(), MODEL_PATH+'/'+MODEL_NAME+f'_ep{epoch}'+'.pth')
+    # If a sample image is specified, run inference and save a visualized segmentation for this epoch
+    if getattr(args, 'sample_image', ''):
+        save_epoch_sample(epoch, args.sample_image)
     
 
 torch.save(model.state_dict(), MODEL_PATH+'/'+MODEL_NAME+'.pth')

@@ -151,7 +151,16 @@ if __name__ == '__main__':
     device = _get_device(args.device)
     # Enable mixed precision training for faster GPU computation
     use_amp = device.type == 'cuda'
-    scaler = torch.cuda.amp.GradScaler() if use_amp else None
+    # Use the new torch.amp.GradScaler API to avoid deprecation warnings
+    if use_amp:
+        # Prefer the new torch.amp.GradScaler when available (silences FutureWarning).
+        try:
+            scaler = torch.amp.GradScaler(device='cuda')
+        except Exception:
+            # Fall back to the older names if running on older PyTorch
+            scaler = torch.cuda.amp.GradScaler()
+    else:
+        scaler = None
     
     if device.type == 'cuda':
         # Enable CuDNN benchmark to select best conv algorithms; improves throughput for fixed input sizes (512x512)

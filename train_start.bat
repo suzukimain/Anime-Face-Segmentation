@@ -27,7 +27,22 @@ if not exist model mkdir model
 echo Starting training at %date% %time%
 REM Run training and both display stdout and save to train.log using PowerShell Tee-Object.
 REM Use the venv python executable directly so the environment is consistent.
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
+REM Detect a sample image in .\test_image and pass it to train.py via --sample_image
+set "SAMPLE_IMAGE="
+for %%p in (test_image\*.png test_image\*.jpg test_image\*.jpeg test_image\*.webp) do (
+	set "SAMPLE_IMAGE=%%~dpnxp"
+	goto :found_sample
+)
+:found_sample
+if defined SAMPLE_IMAGE (
+	echo Found sample image: %SAMPLE_IMAGE%
+	set "SAMPLE_ARG=--sample_image '%SAMPLE_IMAGE%'"
+) else (
+	echo No sample image found in .\test_image; running without sample_image
+	set "SAMPLE_ARG="
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' %SAMPLE_ARG% 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
 set EXITCODE=%ERRORLEVEL%
 
 if %EXITCODE% neq 0 (

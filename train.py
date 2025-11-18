@@ -43,7 +43,8 @@ DATA_PATH  = './dataset/output'
 SEG_PATH = './dataset/mask'
 MODEL_PATH = './model'
 MODEL_NAME = 'UNet'
-CHECKPOINT_PATH = './model/checkpoint.pth'
+CHECKPOINT_DIR = os.path.join(MODEL_PATH, 'checkpoint')
+CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, 'checkpoint.pth')
 BASE_MODEL = ''  # 追加学習したい既存モデルのパス。未指定なら空文字のまま
 LOG_CSV = os.path.join(MODEL_PATH, 'train_history.csv')
 LOG_JSON = os.path.join(MODEL_PATH, 'train_history.json')
@@ -389,7 +390,7 @@ if __name__ == '__main__':
             
             # Save periodic checkpoint every N images
             if args.checkpoint_interval > 0 and processed_images_counter % args.checkpoint_interval < batch_n:
-                checkpoint_path = os.path.join(MODEL_PATH, f'checkpoint_{processed_images_counter}.pth')
+                checkpoint_path = os.path.join(CHECKPOINT_DIR, f'checkpoint_{processed_images_counter}.pth')
                 save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, checkpoint_path, processed_images_counter)
                     
             # scheduler will step per-epoch (after validation)
@@ -414,6 +415,13 @@ if __name__ == '__main__':
     
     def save_checkpoint(epoch, model, optimizer, scheduler, scheduler_plateau, path, processed_images=0):
         """Save training checkpoint with processed images counter"""
+        # ensure the checkpoint directory exists
+        try:
+            dirpath = os.path.dirname(path) if os.path.dirname(path) else MODEL_PATH
+            os.makedirs(dirpath, exist_ok=True)
+        except Exception:
+            pass
+
         torch.save({
             'epoch': epoch,
             'model_state_dict': model.state_dict(),

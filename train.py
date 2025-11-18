@@ -58,6 +58,85 @@ TRAIN_BATCH_SIZE = 8
 VAL_BATCH_SIZE = 8
 TEST_BATCH_SIZE = 1
 
+
+class TrainDatasetWrapper(torch.utils.data.Dataset):
+    """Wrap a Subset and apply deterministic augmentations to create multiple variants per sample.
+
+    This wrapper multiplies the dataset size by `multiplier` (4 by default) and for each
+    returned index maps it to a sample in the underlying `subset` and applies a deterministic
+    augmentation chosen by the variant id.
+    """
+    def __init__(self, subset, base_dataset, multiplier=4):
+        self.subset = subset
+        self.base_dataset = base_dataset
+        self.multiplier = multiplier
+        # keep a local copy of subset indices to avoid changes
+        self.indices = list(subset.indices) if hasattr(subset, 'indices') else list(range(len(subset)))
+
+    def __len__(self):
+        return len(self.indices) * self.multiplier
+
+    def __getitem__(self, idx):
+        # map virtual idx to underlying subset index and variant
+        real_subset_idx = idx // self.multiplier
+        aug_variant = idx % self.multiplier
+
+        # get actual original dataset index from subset
+        orig_idx = self.indices[real_subset_idx]
+
+        # Retrieve original image/mask paths from base dataset
+        # Note: subset.dataset is the base dataset. orig_idx is an index into the base dataset
+        img_path, seg_path = self.base_dataset.pairs[orig_idx]
+        # `img` is a PIL or tensor depending on transform; `seg` is a long tensor (H,W)
+        # We must re-open image/mask from paths to apply PIL operations if transform already applied.
+        # However our base subset returns already transformed image (ToTensor + Normalize),
+        # so reloading is needed. We'll fetch path from base dataset pairs to reapply transform after augmentation.
+
+        # Get file paths
+        img_path, seg_path = self.base_dataset.pairs[orig_idx]
+        from PIL import Image as PILImage
+        img_pil = PILImage.open(img_path).convert('RGB')
+        from torchvision.transforms import functional as TF
+        # Convert seg to PIL to apply geometric aug
+        import numpy as np
+        from PIL import Image as PILImage
+        # use shared util.img2seg to convert mask image into class indices
+        seg_np = img2seg(seg_path)
+        seg_pil = PILImage.fromarray(seg_np.astype(np.uint8))
+
+        # deterministic augmentations by variant
+        if aug_variant >= 1:
+            # Horizontal flip for variants 1 and 2
+            if aug_variant in [1, 2]:
+                img_pil = TF.hflip(img_pil)
+                seg_pil = TF.hflip(seg_pil)
+        if aug_variant == 2:
+            # Rotation for variant 2
+            import random
+            angle = random.uniform(-15, 15)
+            from torchvision.transforms.functional import InterpolationMode
+            img_pil = TF.rotate(img_pil, angle, interpolation=InterpolationMode.BILINEAR)
+            seg_pil = TF.rotate(seg_pil, angle, interpolation=InterpolationMode.NEAREST)
+        if aug_variant == 3:
+            img_pil = TF.vflip(img_pil)
+            seg_pil = TF.vflip(seg_pil)
+            import random
+            translate = (random.randint(-20, 20), random.randint(-20, 20))
+            scale = random.uniform(0.9, 1.1)
+            shear = random.uniform(-5, 5)
+            img_pil = TF.affine(img_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.BILINEAR)
+            seg_pil = TF.affine(seg_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.NEAREST)
+
+        # After geometric augment, apply image transform (same as base dataset) and prepare seg_tensor
+        if self.base_dataset.transform is not None:
+            img_tensor = self.base_dataset.transform(img_pil)
+        else:
+            from torchvision import transforms as _T
+            img_tensor = _T.ToTensor()(img_pil)
+
+        seg_tensor = torch.from_numpy(np.array(seg_pil).astype(np.int64))
+        return img_tensor, seg_tensor
+
 R_TRAIN = 0.88
 R_VAL = 0.07
 # Define transformer for images (ImageNet normalization + light color jitter)
@@ -97,83 +176,6 @@ if __name__ == '__main__':
     len_train = len_total - len_val - len_test
     train_dataset, validation_dataset, test_dataset = random_split(total_dataset, [len_train, len_val, len_test])
     # Enable train_mode for train_dataset by wrapping with augmentation-enabled dataset
-    class TrainDatasetWrapper(torch.utils.data.Dataset):
-        """Wrap a Subset and apply deterministic augmentations to create multiple variants per sample.
-    
-        This wrapper multiplies the dataset size by `multiplier` (4 by default) and for each
-        returned index maps it to a sample in the underlying `subset` and applies a deterministic
-        augmentation chosen by the variant id.
-        """
-        def __init__(self, subset, base_dataset, multiplier=4):
-            self.subset = subset
-            self.base_dataset = base_dataset
-            self.multiplier = multiplier
-            # keep a local copy of subset indices to avoid changes
-            self.indices = list(subset.indices) if hasattr(subset, 'indices') else list(range(len(subset)))
-    
-        def __len__(self):
-            return len(self.indices) * self.multiplier
-    
-        def __getitem__(self, idx):
-            # map virtual idx to underlying subset index and variant
-            real_subset_idx = idx // self.multiplier
-            aug_variant = idx % self.multiplier
-    
-            # get actual original dataset index from subset
-            orig_idx = self.indices[real_subset_idx]
-    
-            # Retrieve original image/mask paths from base dataset
-            # Note: subset.dataset is the base dataset. orig_idx is an index into the base dataset
-            img_path, seg_path = self.base_dataset.pairs[orig_idx]
-            # `img` is a PIL or tensor depending on transform; `seg` is a long tensor (H,W)
-            # We must re-open image/mask from paths to apply PIL operations if transform already applied.
-            # However our base subset returns already transformed image (ToTensor + Normalize),
-            # so reloading is needed. We'll fetch path from base dataset pairs to reapply transform after augmentation.
-    
-            # Get file paths
-            img_path, seg_path = self.base_dataset.pairs[orig_idx]
-            from PIL import Image as PILImage
-            img_pil = PILImage.open(img_path).convert('RGB')
-            from torchvision.transforms import functional as TF
-            # Convert seg to PIL to apply geometric aug
-            import numpy as np
-            from PIL import Image as PILImage
-            # use shared util.img2seg to convert mask image into class indices
-            seg_np = img2seg(seg_path)
-            seg_pil = PILImage.fromarray(seg_np.astype(np.uint8))
-    
-            # deterministic augmentations by variant
-            if aug_variant >= 1:
-                # Horizontal flip for variants 1 and 2
-                if aug_variant in [1, 2]:
-                    img_pil = TF.hflip(img_pil)
-                    seg_pil = TF.hflip(seg_pil)
-            if aug_variant == 2:
-                # Rotation for variant 2
-                import random
-                angle = random.uniform(-15, 15)
-                from torchvision.transforms.functional import InterpolationMode
-                img_pil = TF.rotate(img_pil, angle, interpolation=InterpolationMode.BILINEAR)
-                seg_pil = TF.rotate(seg_pil, angle, interpolation=InterpolationMode.NEAREST)
-            if aug_variant == 3:
-                img_pil = TF.vflip(img_pil)
-                seg_pil = TF.vflip(seg_pil)
-                import random
-                translate = (random.randint(-20, 20), random.randint(-20, 20))
-                scale = random.uniform(0.9, 1.1)
-                shear = random.uniform(-5, 5)
-                img_pil = TF.affine(img_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.BILINEAR)
-                seg_pil = TF.affine(seg_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.NEAREST)
-    
-            # After geometric augment, apply image transform (same as base dataset) and prepare seg_tensor
-            if self.base_dataset.transform is not None:
-                img_tensor = self.base_dataset.transform(img_pil)
-            else:
-                from torchvision import transforms as _T
-                img_tensor = _T.ToTensor()(img_pil)
-    
-            seg_tensor = torch.from_numpy(np.array(seg_pil).astype(np.int64))
-            return img_tensor, seg_tensor
     train_dataset_aug = TrainDatasetWrapper(train_dataset, total_dataset)
     # Build loaders
     # Do not drop the last (possibly smaller) batch so that all images are used per epoch

@@ -14,7 +14,6 @@ import re
 import csv
 import json
 import time
-import contextlib
 
 from network import UNet
 from dataset import UNetDataset
@@ -56,8 +55,8 @@ LEARNING_RATE = 0.0001
 EPOCH = 50
 START_EPOCH = 0
 
-TRAIN_BATCH_SIZE = 16
-VAL_BATCH_SIZE = 16
+TRAIN_BATCH_SIZE = 8
+VAL_BATCH_SIZE = 8
 TEST_BATCH_SIZE = 1
 
 
@@ -138,7 +137,7 @@ R_VAL = 0.07
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', help='device to use (cuda or cpu)')
-    parser.add_argument('--num_workers', type=int, default=8, help='DataLoader num_workers')
+    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
     parser.add_argument('--no-resume', action='store_true', help='Disable resuming from the latest checkpoint (default: resume enabled)')
@@ -150,28 +149,9 @@ if __name__ == '__main__':
     args.resume = not getattr(args, 'no_resume', False)
     
     device = _get_device(args.device)
-    # Enable mixed precision training for faster GPU computation
-    use_amp = device.type == 'cuda'
-    # Initialize AMP scaler and autocast compatibly across PyTorch versions
-    if use_amp:
-        try:
-            scaler = torch.amp.GradScaler(device='cuda')
-        except Exception:
-            scaler = torch.cuda.amp.GradScaler()
-        # autocast compatibility: prefer new API but fall back if not present
-        try:
-            def autocast():
-                return torch.amp.autocast(device_type='cuda')
-        except Exception:
-            autocast = torch.cuda.amp.autocast
-    else:
-        scaler = None
-        autocast = contextlib.nullcontext
-    
     if device.type == 'cuda':
         # Enable CuDNN benchmark to select best conv algorithms; improves throughput for fixed input sizes (512x512)
         torch.backends.cudnn.benchmark = True
-        print('GPU acceleration enabled: mixed precision (FP16) + CuDNN benchmark')
     
     transformer = transforms.Compose([
                 transforms.Resize(INPUT_LEN),
@@ -249,8 +229,7 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda'),
-        persistent_workers=(args.num_workers > 0)
+        pin_memory=(device.type == 'cuda')
     )
     val_loader = DataLoader(
         validation_dataset,
@@ -258,8 +237,7 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda'),
-        persistent_workers=(args.num_workers > 0)
+        pin_memory=(device.type == 'cuda')
     )
     test_loader = DataLoader(
         test_dataset,
@@ -267,8 +245,7 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda'),
-        persistent_workers=(args.num_workers > 0)
+        pin_memory=(device.type == 'cuda')
     )
     # Build Model :: In: 3x512x512 -> Out: 8x512x512
     model = UNet()
@@ -378,7 +355,7 @@ if __name__ == '__main__':
     except Exception:
         pass
     
-    def train(epoch, processed_images_counter, use_amp_flag, amp_scaler):
+    def train(epoch, processed_images_counter):
         """Train for one epoch and return updated processed_images_counter"""
         model.train()
         train_loss = 0
@@ -399,22 +376,14 @@ if __name__ == '__main__':
     
             optimizer.zero_grad()
     
-            # Use automatic mixed precision if enabled
-            if use_amp_flag:
-                with autocast():
-                    pred_seg = model(img)
-                    loss = criterion(pred_seg, seg_target)
-                amp_scaler.scale(loss).backward()
-                amp_scaler.step(optimizer)
-                amp_scaler.update()
-            else:
-                pred_seg = model(img)
-                loss = criterion(pred_seg, seg_target)
-                loss.backward()
-                optimizer.step()
+            pred_seg = model(img)
+            loss = criterion(pred_seg, seg_target)
+    
+            loss.backward()
             # accumulate total loss over samples (for correct per-sample average)
             batch_n = img.size(0)
             train_loss += loss.item() * batch_n
+            optimizer.step()
             
             # Update processed images counter
             processed_images_counter += batch_n
@@ -538,7 +507,7 @@ if __name__ == '__main__':
             print(f'Failed saving epoch sample for {image_path} at epoch {epoch}: {e}')
     
     for epoch in range(START_EPOCH, EPOCH):
-        total_processed_images = train(epoch, total_processed_images, use_amp, scaler)
+        total_processed_images = train(epoch, total_processed_images)
         val_loss = validation(epoch)
         # Step CosineAnnealingWarmRestarts per-epoch
         scheduler.step()

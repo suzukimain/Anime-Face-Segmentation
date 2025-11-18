@@ -36,13 +36,11 @@ for %%p in (test_image\*.png test_image\*.jpg test_image\*.jpeg test_image\*.web
 :found_sample
 if defined SAMPLE_IMAGE (
 	echo Found sample image: %SAMPLE_IMAGE%
-	set "SAMPLE_ARG=--sample_image '%SAMPLE_IMAGE%'"
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' --sample_image '%SAMPLE_IMAGE%' 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
 ) else (
 	echo No sample image found in .\test_image; running without sample_image
-	set "SAMPLE_ARG="
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
 )
-
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& { & '.\\.venv\\Scripts\\python.exe' -u 'train.py' %SAMPLE_ARG% 2>&1 | Tee-Object -FilePath 'train.log'; exit $LASTEXITCODE }"
 set EXITCODE=%ERRORLEVEL%
 
 if %EXITCODE% neq 0 (

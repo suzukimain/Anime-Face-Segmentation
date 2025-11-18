@@ -158,7 +158,7 @@ if __name__ == '__main__':
             scaler = torch.amp.GradScaler(device='cuda')
         except Exception:
             # Fall back to the older names if running on older PyTorch
-            scaler = torch.cuda.amp.GradScaler()
+            scaler = torch.amp.GradScaler(device='cuda')
     else:
         scaler = None
     

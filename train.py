@@ -140,6 +140,9 @@ if __name__ == '__main__':
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
     parser.add_argument('--resume', action='store_true', help='Resume training from the latest checkpoint')
+    parser.add_argument('--use_class_weights', action='store_true', help='Automatically compute and apply class weights from training masks')
+    parser.add_argument('--class_weights_file', type=str, default='', help='Load class weights from JSON file (output of compute_class_weights.py)')
+    parser.add_argument('--ignore_index', type=int, default=-100, help='Class index to ignore in loss computation (default: -100 for PyTorch default)')
     args = parser.parse_args()
     
     device = _get_device(args.device)
@@ -170,6 +173,49 @@ if __name__ == '__main__':
     len_test = int(len_total * R_TEST)
     len_train = len_total - len_val - len_test
     train_dataset, validation_dataset, test_dataset = random_split(total_dataset, [len_train, len_val, len_test])
+    
+    # Compute or load class weights for imbalanced classes
+    class_weights = None
+    if args.class_weights_file:
+        # Load from JSON file
+        print(f'Loading class weights from {args.class_weights_file}...')
+        try:
+            import json
+            with open(args.class_weights_file, 'r', encoding='utf-8') as f:
+                weights_data = json.load(f)
+                class_weights = torch.tensor(weights_data['weights_tensor'], dtype=torch.float32)
+                print(f'Class weights loaded: {class_weights.tolist()}')
+        except Exception as e:
+            print(f'Warning: Failed to load class weights: {e}')
+    elif args.use_class_weights:
+        # Auto-compute from training masks
+        print('Auto-computing class weights from training masks...')
+        num_classes = 8
+        class_pixel_counts = np.zeros(num_classes, dtype=np.int64)
+        # Sample from train_dataset indices
+        train_indices = train_dataset.indices if hasattr(train_dataset, 'indices') else range(len(train_dataset))
+        sample_size = min(len(train_indices), 500)  # Sample up to 500 images for speed
+        import random
+        sampled_indices = random.sample(list(train_indices), sample_size)
+        print(f'Sampling {sample_size} training masks...')
+        for idx in sampled_indices:
+            _, seg_path = total_dataset.pairs[idx]
+            try:
+                seg = img2seg(seg_path)
+                unique_classes, counts = np.unique(seg, return_counts=True)
+                for cls, count in zip(unique_classes, counts):
+                    if 0 <= cls < num_classes:
+                        class_pixel_counts[cls] += count
+            except Exception:
+                continue
+        # Compute inverse frequency weights
+        total_pixels = class_pixel_counts.sum()
+        class_frequencies = class_pixel_counts / total_pixels if total_pixels > 0 else class_pixel_counts
+        epsilon = 1e-7
+        inverse_freq_weights = 1.0 / (class_frequencies + epsilon)
+        inverse_freq_weights = inverse_freq_weights / inverse_freq_weights.mean()
+        class_weights = torch.tensor(inverse_freq_weights, dtype=torch.float32)
+        print(f'Computed class weights: {class_weights.tolist()}')
     # Enable train_mode for train_dataset by wrapping with augmentation-enabled dataset
     train_dataset_aug = TrainDatasetWrapper(train_dataset, total_dataset)
     # Build loaders
@@ -207,7 +253,14 @@ if __name__ == '__main__':
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     # Backup: reduce LR on plateau (validation loss)
     scheduler_plateau = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-    criterion = nn.CrossEntropyLoss()
+    # Apply class weights and ignore_index to criterion
+    if class_weights is not None:
+        class_weights = class_weights.to(device)
+        criterion = nn.CrossEntropyLoss(weight=class_weights, ignore_index=args.ignore_index)
+        print(f'Using weighted CrossEntropyLoss with ignore_index={args.ignore_index}')
+    else:
+        criterion = nn.CrossEntropyLoss(ignore_index=args.ignore_index)
+        print(f'Using CrossEntropyLoss with ignore_index={args.ignore_index}')
     
     # Prefer loading a BASE_MODEL for additional training if specified
     if BASE_MODEL and os.path.exists(BASE_MODEL):

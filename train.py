@@ -139,11 +139,13 @@ if __name__ == '__main__':
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
-    parser.add_argument('--resume', action='store_true', help='Resume training from the latest checkpoint')
+    parser.add_argument('--no-resume', action='store_true', help='Disable resuming from the latest checkpoint (default: resume enabled)')
     parser.add_argument('--use_class_weights', action='store_true', help='Automatically compute and apply class weights from training masks')
     parser.add_argument('--class_weights_file', type=str, default='', help='Load class weights from JSON file (output of compute_class_weights.py)')
     parser.add_argument('--ignore_index', type=int, default=-100, help='Class index to ignore in loss computation (default: -100 for PyTorch default)')
     args = parser.parse_args()
+    # Default behavior: resume is ON unless user passes --no-resume
+    args.resume = not getattr(args, 'no_resume', False)
     
     device = _get_device(args.device)
     if device.type == 'cuda':
@@ -476,8 +478,8 @@ if __name__ == '__main__':
         if not image_path:
             return
         try:
-            # prepare output directory
-            out_dir = os.path.join('.', f'{epoch+1}epoch')
+            # prepare output directory under test_image/ so samples are grouped with inputs
+            out_dir = os.path.join('test_image', f'{epoch+1}epoch')
             os.makedirs(out_dir, exist_ok=True)
     
             img_pil = Image.open(image_path).convert('RGB')

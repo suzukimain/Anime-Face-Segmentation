@@ -138,7 +138,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', help='device to use (cuda or cpu)')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
-    parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
+    parser.add_argument('--sample_image', type=str, default=r'test_image\\Hoshino.webp', help='Path to a sample image to run inference on every epoch and save result')
+    parser.add_argument('--train_batch_size', type=int, default=TRAIN_BATCH_SIZE, help='Training batch size')
+    parser.add_argument('--val_batch_size', type=int, default=VAL_BATCH_SIZE, help='Validation batch size')
+    parser.add_argument('--test_batch_size', type=int, default=TEST_BATCH_SIZE, help='Test batch size')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
     parser.add_argument('--no-resume', action='store_true', help='Disable resuming from the latest checkpoint (default: resume enabled)')
     parser.add_argument('--use_class_weights', action='store_true', help='Automatically compute and apply class weights from training masks')
@@ -152,6 +155,15 @@ if __name__ == '__main__':
     if device.type == 'cuda':
         # Enable CuDNN benchmark to select best conv algorithms; improves throughput for fixed input sizes (512x512)
         torch.backends.cudnn.benchmark = True
+
+    # Setup mixed precision (AMP) if CUDA is available
+    use_amp = (device.type == 'cuda')
+    scaler = torch.amp.GradScaler(device='cuda') if use_amp else None
+
+    # Allow overriding batch sizes from CLI
+    TRAIN_BATCH = int(getattr(args, 'train_batch_size', TRAIN_BATCH_SIZE))
+    VAL_BATCH = int(getattr(args, 'val_batch_size', VAL_BATCH_SIZE))
+    TEST_BATCH = int(getattr(args, 'test_batch_size', TEST_BATCH_SIZE))
     
     transformer = transforms.Compose([
                 transforms.Resize(INPUT_LEN),
@@ -225,7 +237,7 @@ if __name__ == '__main__':
     # Do not drop the last (possibly smaller) batch so that all images are used per epoch
     train_loader = DataLoader(
         train_dataset_aug,
-        batch_size=TRAIN_BATCH_SIZE,
+        batch_size=TRAIN_BATCH,
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
@@ -233,7 +245,7 @@ if __name__ == '__main__':
     )
     val_loader = DataLoader(
         validation_dataset,
-        batch_size=VAL_BATCH_SIZE,
+        batch_size=VAL_BATCH,
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
@@ -241,7 +253,7 @@ if __name__ == '__main__':
     )
     test_loader = DataLoader(
         test_dataset,
-        batch_size=TEST_BATCH_SIZE,
+        batch_size=TEST_BATCH,
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
@@ -373,17 +385,29 @@ if __name__ == '__main__':
             img, seg_target = data
             img = img.to(device, non_blocking=True)
             seg_target = seg_target.to(device, non_blocking=True).long()
-    
+
             optimizer.zero_grad()
-    
-            pred_seg = model(img)
-            loss = criterion(pred_seg, seg_target)
-    
-            loss.backward()
-            # accumulate total loss over samples (for correct per-sample average)
-            batch_n = img.size(0)
-            train_loss += loss.item() * batch_n
-            optimizer.step()
+
+            # Mixed precision forward / backward when using CUDA
+            if use_amp:
+                with torch.cuda.amp.autocast():
+                    pred_seg = model(img)
+                    loss = criterion(pred_seg, seg_target)
+                # scale gradients and step
+                scaler.scale(loss).backward()
+                # accumulate total loss over samples (for correct per-sample average)
+                batch_n = img.size(0)
+                train_loss += loss.item() * batch_n
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                pred_seg = model(img)
+                loss = criterion(pred_seg, seg_target)
+                loss.backward()
+                # accumulate total loss over samples (for correct per-sample average)
+                batch_n = img.size(0)
+                train_loss += loss.item() * batch_n
+                optimizer.step()
             
             # Update processed images counter
             processed_images_counter += batch_n
@@ -440,8 +464,13 @@ if __name__ == '__main__':
                 img, seg_target = data
                 img = img.to(device, non_blocking=True)
                 seg_target = seg_target.to(device, non_blocking=True)
-                pred_seg = model(img)
-    
+                # run inference under autocast on CUDA for faster eval
+                if use_amp:
+                    with torch.cuda.amp.autocast():
+                        pred_seg = model(img)
+                else:
+                    pred_seg = model(img)
+
                 # sum up batch loss (per-sample)
                 batch_n = img.size(0)
                 val_loss += criterion(pred_seg, seg_target).item() * batch_n
@@ -494,7 +523,11 @@ if __name__ == '__main__':
             inp = eval_transform(img_pil).unsqueeze(0).to(device)
             model.eval()
             with torch.no_grad():
-                pred = model(inp)
+                if use_amp:
+                    with torch.cuda.amp.autocast():
+                        pred = model(inp)
+                else:
+                    pred = model(inp)
                 # convert to class indices
                 pred_idx = pred.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
                 vis = seg2img(pred_idx)

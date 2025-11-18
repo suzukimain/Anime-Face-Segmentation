@@ -9,6 +9,7 @@ COLOR_CLOTHES    = (255, 0, 0)       # clothes - blue
 COLOR_SKIN       = (180, 224, 255)   # skin - light peach
 COLOR_EYE        = (0, 255, 255)     # eye - yellow
 COLOR_MOUTH      = (0, 0, 255)       # mouth - red
+COLOR_OTHERS     = (128, 128, 128)   # others - accessories, hats, glasses
 
 PALETTE = [
     COLOR_BACKGROUND,
@@ -17,7 +18,8 @@ PALETTE = [
     COLOR_CLOTHES,
     COLOR_SKIN,
     COLOR_EYE,
-    COLOR_MOUTH
+    COLOR_MOUTH,
+    COLOR_OTHERS
 ]
 
 

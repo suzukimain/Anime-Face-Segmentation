@@ -115,7 +115,7 @@ class UNetDataset(Dataset):
             img_tensor = _T.ToTensor()(img)
 
         # Convert mask back to tensor (class indices)
-        seg_tensor = torch.from_numpy(np.array(seg_pil).astype(np.int64))
+        seg_tensor = torch.from_numpy(np.array(seg_pil).astype(np.int64)).long()
 
         return img_tensor, seg_tensor
         

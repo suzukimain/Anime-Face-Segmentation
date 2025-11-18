@@ -5,7 +5,7 @@ Classes : [ background, hair, eye, mouth, face, skin, clothes ]
 ## Model
 ![1_Xp3R17gR8PL0SA0inUplcg](https://user-images.githubusercontent.com/117014820/229331131-181bbe04-259f-4649-926c-c8916a5508e3.jpg)
 
-In: 3x512x512 -> Out: 7x512x512
+In: 3x512x512 -> Out: 8x512x512
 
 It uses pretrained mobilenet_v2 as encoder
 ## References

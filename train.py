@@ -137,13 +137,19 @@ R_VAL = 0.07
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--device', help='device to use (cuda or cpu)')
-    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
+    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers (recommend: CPU cores - 1)')
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
     parser.add_argument('--checkpoint_interval', type=int, default=500, help='Save checkpoint every N processed images (default: 500)')
     parser.add_argument('--no-resume', action='store_true', help='Disable resuming from the latest checkpoint (default: resume enabled)')
     parser.add_argument('--use_class_weights', action='store_true', help='Automatically compute and apply class weights from training masks')
     parser.add_argument('--class_weights_file', type=str, default='', help='Load class weights from JSON file (output of compute_class_weights.py)')
     parser.add_argument('--ignore_index', type=int, default=-100, help='Class index to ignore in loss computation (default: -100 for PyTorch default)')
+    # GPU optimization flags
+    parser.add_argument('--amp', action='store_true', help='Enable mixed precision training (AMP) for faster GPU training')
+    parser.add_argument('--persistent_workers', action='store_true', help='Keep DataLoader workers alive between epochs (reduces startup overhead)')
+    parser.add_argument('--prefetch_factor', type=int, default=2, help='Number of batches to prefetch per worker (default: 2)')
+    parser.add_argument('--channels_last', action='store_true', help='Use channels_last memory format for potential GPU speedup')
+    parser.add_argument('--zero_grad_set_to_none', action='store_true', help='Set grads to None instead of zero (small speedup)')
     args = parser.parse_args()
     # Default behavior: resume is ON unless user passes --no-resume
     args.resume = not getattr(args, 'no_resume', False)
@@ -229,7 +235,9 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda')
+        pin_memory=(device.type == 'cuda'),
+        persistent_workers=(args.persistent_workers and args.num_workers > 0),
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None
     )
     val_loader = DataLoader(
         validation_dataset,
@@ -237,7 +245,9 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda')
+        pin_memory=(device.type == 'cuda'),
+        persistent_workers=(args.persistent_workers and args.num_workers > 0),
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None
     )
     test_loader = DataLoader(
         test_dataset,
@@ -245,13 +255,22 @@ if __name__ == '__main__':
         shuffle=True,
         drop_last=False,
         num_workers=args.num_workers,
-        pin_memory=(device.type == 'cuda')
+        pin_memory=(device.type == 'cuda'),
+        persistent_workers=(args.persistent_workers and args.num_workers > 0),
+        prefetch_factor=args.prefetch_factor if args.num_workers > 0 else None
     )
     # Build Model :: In: 3x512x512 -> Out: 8x512x512
     model = UNet()
     model.to(device)
+    if args.channels_last:
+        model = model.to(memory_format=torch.channels_last)
+        print('Model using channels_last memory format')
     
     optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
+    # Initialize GradScaler for mixed precision training
+    scaler = torch.cuda.amp.GradScaler(enabled=(args.amp and device.type == 'cuda'))
+    if args.amp and device.type == 'cuda':
+        print('Mixed precision (AMP) enabled')
     # Cosine annealing with warm restarts: smooth decay and periodic restarts for better exploration
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2, eta_min=1e-6)
     # Backup: reduce LR on plateau (validation loss)
@@ -303,6 +322,8 @@ if __name__ == '__main__':
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             if 'scheduler_plateau_state_dict' in checkpoint:
                 scheduler_plateau.load_state_dict(checkpoint['scheduler_plateau_state_dict'])
+            if 'scaler_state_dict' in checkpoint:
+                scaler.load_state_dict(checkpoint['scaler_state_dict'])
             START_EPOCH = checkpoint['epoch'] + 1
             total_processed_images = checkpoint.get('processed_images', 0)
             print(f'Resuming training from epoch {START_EPOCH} (total processed: {total_processed_images} images)')
@@ -358,6 +379,8 @@ if __name__ == '__main__':
     def train(epoch, processed_images_counter):
         """Train for one epoch and return updated processed_images_counter"""
         model.train()
+        use_amp = args.amp and device.type == 'cuda'
+        use_channels_last = args.channels_last
         train_loss = 0
         # ensure log dir exists
         os.makedirs(MODEL_PATH, exist_ok=True)
@@ -372,18 +395,25 @@ if __name__ == '__main__':
         for batch_idx, data in enumerate(train_loader):
             img, seg_target = data
             img = img.to(device, non_blocking=True)
+            if use_channels_last:
+                img = img.to(memory_format=torch.channels_last)
             seg_target = seg_target.to(device, non_blocking=True).long()
     
-            optimizer.zero_grad()
+            optimizer.zero_grad(set_to_none=args.zero_grad_set_to_none)
     
-            pred_seg = model(img)
-            loss = criterion(pred_seg, seg_target)
+            # Mixed precision forward pass
+            with torch.cuda.amp.autocast(enabled=use_amp):
+                pred_seg = model(img)
+                loss = criterion(pred_seg, seg_target)
     
-            loss.backward()
+            # Scaled backward
+            scaler.scale(loss).backward()
             # accumulate total loss over samples (for correct per-sample average)
             batch_n = img.size(0)
             train_loss += loss.item() * batch_n
-            optimizer.step()
+            # Scaled optimizer step
+            scaler.step(optimizer)
+            scaler.update()
             
             # Update processed images counter
             processed_images_counter += batch_n
@@ -428,6 +458,7 @@ if __name__ == '__main__':
             'optimizer_state_dict': optimizer.state_dict(),
             'scheduler_state_dict': scheduler.state_dict(),
             'scheduler_plateau_state_dict': scheduler_plateau.state_dict(),
+            'scaler_state_dict': scaler.state_dict(),
             'processed_images': processed_images,
         }, path)
         print(f'Checkpoint saved at epoch {epoch} (total processed: {processed_images} images)')
@@ -439,8 +470,11 @@ if __name__ == '__main__':
             for data in val_loader:
                 img, seg_target = data
                 img = img.to(device, non_blocking=True)
+                if args.channels_last:
+                    img = img.to(memory_format=torch.channels_last)
                 seg_target = seg_target.to(device, non_blocking=True)
-                pred_seg = model(img)
+                with torch.cuda.amp.autocast(enabled=(args.amp and device.type == 'cuda')):
+                    pred_seg = model(img)
     
                 # sum up batch loss (per-sample)
                 batch_n = img.size(0)

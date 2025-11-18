@@ -18,6 +18,24 @@ import time
 from network import UNet
 from dataset import UNetDataset
 from util import seg2img, img2seg
+import argparse
+from torchvision.transforms import InterpolationMode
+
+
+def _get_device(explicit: str | None = None) -> torch.device:
+    """Resolve torch.device from an optional string, falling back to CUDA if available.
+
+    Mirrors the behavior used by `predict.py`.
+    """
+    if explicit:
+        try:
+            d = torch.device(explicit)
+            if d.type == 'cuda' and not torch.cuda.is_available():
+                return torch.device('cpu')
+            return d
+        except Exception:
+            return torch.device('cpu')
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 ####################################################################
 # Constants and hyper parameters
@@ -43,6 +61,16 @@ TEST_BATCH_SIZE = 1
 R_TRAIN = 0.88
 R_VAL = 0.07
 # Define transformer for images (ImageNet normalization + light color jitter)
+parser = argparse.ArgumentParser()
+parser.add_argument('--device', help='device to use (cuda or cpu)')
+parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
+args = parser.parse_args()
+
+device = _get_device(args.device)
+if device.type == 'cuda':
+    # Enable CuDNN benchmark to select best conv algorithms; improves throughput for fixed input sizes (512x512)
+    torch.backends.cudnn.benchmark = True
+
 transformer = transforms.Compose([
             transforms.Resize(INPUT_LEN),
             transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.05),
@@ -126,8 +154,8 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
             translate = (random.randint(-20, 20), random.randint(-20, 20))
             scale = random.uniform(0.9, 1.1)
             shear = random.uniform(-5, 5)
-                img_pil = TF.affine(img_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.BILINEAR)
-                seg_pil = TF.affine(seg_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.NEAREST)
+            img_pil = TF.affine(img_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.BILINEAR)
+            seg_pil = TF.affine(seg_pil, angle=0, translate=list(translate), scale=scale, shear=[shear], interpolation=InterpolationMode.NEAREST)
 
         # After geometric augment, apply image transform (same as base dataset) and prepare seg_tensor
         if self.base_dataset.transform is not None:
@@ -141,13 +169,33 @@ class TrainDatasetWrapper(torch.utils.data.Dataset):
 train_dataset_aug = TrainDatasetWrapper(train_dataset, total_dataset)
 # Build loaders
 # Do not drop the last (possibly smaller) batch so that all images are used per epoch
-train_loader = DataLoader(train_dataset_aug, batch_size=TRAIN_BATCH_SIZE, shuffle=True, drop_last=False)
-val_loader = DataLoader(validation_dataset, batch_size=VAL_BATCH_SIZE, shuffle=True, drop_last=False)
-test_loader = DataLoader(test_dataset, batch_size=TEST_BATCH_SIZE, shuffle=True, drop_last=False)
+train_loader = DataLoader(
+    train_dataset_aug,
+    batch_size=TRAIN_BATCH_SIZE,
+    shuffle=True,
+    drop_last=False,
+    num_workers=args.num_workers,
+    pin_memory=(device.type == 'cuda')
+)
+val_loader = DataLoader(
+    validation_dataset,
+    batch_size=VAL_BATCH_SIZE,
+    shuffle=True,
+    drop_last=False,
+    num_workers=args.num_workers,
+    pin_memory=(device.type == 'cuda')
+)
+test_loader = DataLoader(
+    test_dataset,
+    batch_size=TEST_BATCH_SIZE,
+    shuffle=True,
+    drop_last=False,
+    num_workers=args.num_workers,
+    pin_memory=(device.type == 'cuda')
+)
 # Build Model :: In: 3x512x512 -> Out: 8x512x512
 model = UNet()
-if torch.cuda.is_available():
-    model.cuda()
+model.to(device)
 
 optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
 # Cosine annealing with warm restarts: smooth decay and periodic restarts for better exploration
@@ -160,7 +208,7 @@ criterion = nn.CrossEntropyLoss()
 if BASE_MODEL and os.path.exists(BASE_MODEL):
     print(f'Loading base model from {BASE_MODEL} for additional training...')
     try:
-        state = torch.load(BASE_MODEL, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+        state = torch.load(BASE_MODEL, map_location=device)
         if isinstance(state, dict) and 'model_state_dict' in state:
             state = state['model_state_dict']
         try:
@@ -186,7 +234,7 @@ elif os.path.exists(CHECKPOINT_PATH):
     # Load checkpoint if exists (used when BASE_MODEL is not specified)
     print(f'Loading checkpoint from {CHECKPOINT_PATH}...')
     try:
-        checkpoint = torch.load(CHECKPOINT_PATH)
+        checkpoint = torch.load(CHECKPOINT_PATH, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -230,7 +278,7 @@ try:
         if max_epoch + 1 > START_EPOCH:
             try:
                 print(f'Found saved epoch model: {max_fp} (epoch {max_epoch}). Loading and resuming from next epoch {max_epoch+1}...')
-                state = torch.load(max_fp, map_location=('cuda' if torch.cuda.is_available() else 'cpu'))
+                state = torch.load(max_fp, map_location=device)
                 if isinstance(state, dict) and 'model_state_dict' in state:
                     state = state['model_state_dict']
                 model.load_state_dict(state)
@@ -256,8 +304,8 @@ def train(epoch):
             pass
     for batch_idx, data in enumerate(train_loader):
         img, seg_target = data
-        img = img.cuda()
-        seg_target = seg_target.cuda().long()
+        img = img.to(device, non_blocking=True)
+        seg_target = seg_target.to(device, non_blocking=True).long()
 
         optimizer.zero_grad()
 
@@ -306,8 +354,8 @@ def validation(epoch):
     with torch.no_grad():
         for data in val_loader:
             img, seg_target = data
-            img = img.cuda()
-            seg_target = seg_target.cuda()
+            img = img.to(device, non_blocking=True)
+            seg_target = seg_target.to(device, non_blocking=True)
             pred_seg = model(img)
 
             # sum up batch loss (per-sample)
@@ -366,8 +414,8 @@ with torch.no_grad():
     model.eval()
     for data in test_loader:
         img, seg_target = data
-        img = img.cuda()
-        seg_target = seg_target.cuda()
+        img = img.to(device, non_blocking=True)
+        seg_target = seg_target.to(device, non_blocking=True)
         pred_seg = model(img)
         
         pred_seg = pred_seg.cpu().numpy()

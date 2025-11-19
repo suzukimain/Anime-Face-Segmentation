@@ -41,25 +41,45 @@ def img2seg(path):
     idx = d2.argmin(axis=1).reshape(h, w).astype(np.int64)
     return idx
 
-def seg2img(src):
+def seg2img(src, num_classes: int = 8):
+    """Convert segmentation logits/indices to colored image.
+    
+    Args:
+        src: (C,H,W), (H,W,C), or (H,W) array
+        num_classes: Expected number of segmentation classes
+    Returns:
+        (H,W,3) uint8 BGR image
+    """
     src = np.array(src)
     # Accept logits/probs (C,H,W) or (H,W,C), or class indices (H,W)
     if src.ndim == 2:
         class_idx = src.astype(np.int64)
+        detected_classes = int(class_idx.max()) + 1
     elif src.ndim == 3:
-        if src.shape[0] == len(PALETTE):
-            # (C,H,W) -> (H,W,C)
+        # (C,H,W) format?
+        if src.shape[0] <= 32 and src.shape[2] > 32:
+            # Likely (C,H,W)
+            detected_classes = src.shape[0]
             src = np.moveaxis(src, 0, 2)
-        if src.shape[2] != len(PALETTE):
-            raise ValueError(f"seg2img: unexpected channel count {src.shape} (palette size {len(PALETTE)})")
+        else:
+            detected_classes = src.shape[2]
         class_idx = np.argmax(src, axis=2)
     else:
         raise ValueError(f"seg2img: unexpected array shape {src.shape}")
 
+    # Use provided num_classes or detected
+    n_colors = max(num_classes, detected_classes)
+    # Generate palette: use predefined if available, else generate
+    palette = list(PALETTE)
+    while len(palette) < n_colors:
+        # Generate additional colors
+        np.random.seed(len(palette))
+        palette.append(tuple(np.random.randint(0, 256, 3).tolist()))
+    
     h, w = class_idx.shape
     dst = np.zeros((h, w, 3), dtype=np.uint8)
-    for idx, color in enumerate(PALETTE):
+    for idx in range(n_colors):
         mask = (class_idx == idx)
         if np.any(mask):
-            dst[mask] = color
+            dst[mask] = palette[idx]
     return dst

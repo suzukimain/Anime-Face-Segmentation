@@ -5,9 +5,9 @@ import torchvision
 from torchvision.models import MobileNet_V2_Weights
 
 class UNet(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes: int = 8):
         super(UNet, self).__init__()
-        self.NUM_SEG_CLASSES = 8 # Background, hair, face, clothes, skin, eye, mouth, others
+        self.NUM_SEG_CLASSES = num_classes
         
         mobilenet_v2 = torchvision.models.mobilenet_v2(weights=MobileNet_V2_Weights.IMAGENET1K_V1)
         mob_blocks = mobilenet_v2.features

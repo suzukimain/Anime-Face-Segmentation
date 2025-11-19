@@ -136,6 +136,7 @@ R_VAL = 0.07
 # Define transformer for images (ImageNet normalization + light color jitter)
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--num_classes', type=int, default=8, help='Number of segmentation classes (default: 8)')
     parser.add_argument('--device', help='device to use (cuda or cpu)')
     parser.add_argument('--num_workers', type=int, default=4, help='DataLoader num_workers')
     parser.add_argument('--sample_image', type=str, default='', help='Path to a sample image to run inference on every epoch and save result')
@@ -193,7 +194,7 @@ if __name__ == '__main__':
     elif args.use_class_weights:
         # Auto-compute from training masks
         print('Auto-computing class weights from training masks...')
-        num_classes = 8
+        num_classes = args.num_classes
         class_pixel_counts = np.zeros(num_classes, dtype=np.int64)
         # Sample from train_dataset indices
         train_indices = train_dataset.indices if hasattr(train_dataset, 'indices') else range(len(train_dataset))
@@ -247,8 +248,8 @@ if __name__ == '__main__':
         num_workers=args.num_workers,
         pin_memory=(device.type == 'cuda')
     )
-    # Build Model :: In: 3x512x512 -> Out: 8x512x512
-    model = UNet()
+    # Build Model :: In: 3x512x512 -> Out: num_classes x 512x512
+    model = UNet(num_classes=args.num_classes)
     model.to(device)
     
     optimizer = optim.Adam(model.parameters(), LEARNING_RATE, weight_decay=1e-5)
@@ -497,7 +498,7 @@ if __name__ == '__main__':
                 pred = model(inp)
                 # convert to class indices
                 pred_idx = pred.argmax(dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
-                vis = seg2img(pred_idx)
+                vis = seg2img(pred_idx, num_classes=args.num_classes)
                 # vis is expected as HxWx3 RGB uint8
                 out_name = os.path.splitext(os.path.basename(image_path))[0] + '.png'
                 out_path = os.path.join(out_dir, out_name)
@@ -536,6 +537,6 @@ if __name__ == '__main__':
             
             pred_seg = pred_seg.cpu().numpy()
             for i in range(TEST_BATCH_SIZE):
-                img = seg2img(np.moveaxis(pred_seg[i],0,2))
+                img = seg2img(np.moveaxis(pred_seg[i],0,2), num_classes=args.num_classes)
                 cv.imwrite(f'result{i}.png',img)
             break

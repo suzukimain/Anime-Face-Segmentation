@@ -39,9 +39,9 @@ def _load_model(model_path: str, device: torch.device) -> UNet:
     else:
         state = checkpoint
 
-    # Adapt state dict: try to copy parameters, adapting shapes when possible
+    # Filter state dict: only keep parameters whose shapes match the current model.
     model_state = model.state_dict()
-    adapted_state = {}
+    filtered_state = {}
 
     def find_matching_key(src_key: str):
         # Try exact key, then try with/without 'module.' prefix (DataParallel compat)
@@ -56,46 +56,19 @@ def _load_model(model_path: str, device: torch.device) -> UNet:
                 return stripped
         return None
 
-    def adapt_tensor(src: torch.Tensor, target_shape: tuple) -> torch.Tensor:
-        # If shapes equal, return src
-        if tuple(src.shape) == tuple(target_shape):
-            return src
-        # If different number of dims, can't safely adapt; return None
-        if src.ndim != len(target_shape):
-            return None
-        # Create new tensor with target shape, filled with zeros (same dtype/device)
-        new = src.new_zeros(*target_shape)
-        # Determine slices to copy (copy along leading indices up to min size)
-        slices = tuple(slice(0, min(s, t)) for s, t in zip(src.shape, target_shape))
-        new[slices] = src[slices]
-        return new
-
     for k, v in list(state.items()):
         match = find_matching_key(k)
         if match is None:
+            # Key not present in target model; skip it.
             print(f"Skipping unmatched key in checkpoint: {k}")
             continue
-        target_shape = tuple(model_state[match].shape)
-        try:
-            adapted = None
-            if tuple(v.shape) == target_shape:
-                adapted = v
-            else:
-                adapted = adapt_tensor(v, target_shape)
-            if adapted is None:
-                print(f"Cannot adapt key (dim mismatch): {k} -> {match} | checkpoint: {tuple(v.shape)} != model: {target_shape}")
-                continue
-            # Ensure dtype/device compatibility with model_state
-            adapted = adapted.to(model_state[match].device).type_as(model_state[match])
-            adapted_state[match] = adapted
-            if tuple(v.shape) != target_shape:
-                print(f"Adapted key: {k} -> {match} | {tuple(v.shape)} -> {target_shape}")
-        except Exception as e:
-            print(f"Failed to adapt key {k} -> {match}: {e}")
+        if model_state[match].shape != v.shape:
+            print(f"Skipping key due to shape mismatch: {k} -> {match} | checkpoint: {tuple(v.shape)} != model: {tuple(model_state[match].shape)}")
             continue
+        filtered_state[match] = v
 
-    # Load adapted state dict (non-strict to allow missing keys)
-    model.load_state_dict(adapted_state, strict=False)
+    # Load filtered state dict (non-strict to allow missing keys)
+    model.load_state_dict(filtered_state, strict=False)
     model.to(device)
     model.eval()
     return model
@@ -145,7 +118,7 @@ def convert_img(
     """
     # Resolve device and load model
     dev = _get_device(device)
-    model = _load_model(model_path, dev)
+    model, num_classes = _load_model(model_path, dev)
 
     # Preprocess image
     pil_img = _to_pil_image(src)
@@ -161,7 +134,7 @@ def convert_img(
         seg = model(x).squeeze(0)
 
     # Postprocess to color image (numpy HWC uint8)
-    result = seg2img(seg.detach().cpu().numpy())  # (H, W, 3) uint8
+    result = seg2img(seg.detach().cpu().numpy(), num_classes=num_classes)  # (H, W, 3) uint8
 
     # Optional save: prefer explicit save_path, fallback to deprecated save_dir
     if save_path is not None:

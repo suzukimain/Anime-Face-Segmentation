@@ -25,8 +25,30 @@ def _get_device(explicit: Optional[str] = None) -> torch.device:
             return torch.device("cpu")
     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def _load_model(model_path: str, device: torch.device) -> UNet:
-    model = UNet()
+def _detect_num_classes(state: dict) -> int:
+    """Detect number of segmentation classes from checkpoint state_dict."""
+    # Look for de_block0 final conv layer output channels
+    candidates = [
+        'de_block0.1.weight',
+        'module.de_block0.1.weight',
+        'de_block0.1.bias',
+        'module.de_block0.1.bias'
+    ]
+    for key in candidates:
+        if key in state:
+            tensor = state[key]
+            if 'weight' in key:
+                # Conv2d weight shape: (out_ch, in_ch, k, k)
+                return tensor.shape[0]
+            elif 'bias' in key:
+                # Conv2d bias shape: (out_ch,)
+                return tensor.shape[0]
+    # Fallback: default to 8
+    print("Warning: Could not detect num_classes from checkpoint, defaulting to 8")
+    return 8
+
+def _load_model(model_path: str, device: torch.device) -> tuple[UNet, int]:
+    """Load model from checkpoint and return (model, num_classes)."""
     checkpoint = torch.load(model_path, map_location=device)
     # Handle both checkpoint dict (with 'model_state_dict' or 'state_dict') and plain state_dict
     if isinstance(checkpoint, dict):
@@ -39,7 +61,12 @@ def _load_model(model_path: str, device: torch.device) -> UNet:
     else:
         state = checkpoint
 
-    # Filter state dict: only keep parameters whose shapes match the current model.
+    # Detect number of classes from checkpoint
+    num_classes = _detect_num_classes(state)
+    print(f"Detected {num_classes} classes from checkpoint")
+    
+    # Build model with detected number of classes
+    model = UNet(num_classes=num_classes)
     model_state = model.state_dict()
     filtered_state = {}
 
@@ -71,7 +98,7 @@ def _load_model(model_path: str, device: torch.device) -> UNet:
     model.load_state_dict(filtered_state, strict=False)
     model.to(device)
     model.eval()
-    return model
+    return model, num_classes
 
 def _to_pil_image(src: Union[str, Image.Image, Any]) -> Image.Image:
     """Accept path, PIL.Image, or numpy array and return a PIL RGB image."""

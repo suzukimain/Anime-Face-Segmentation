@@ -27,11 +27,75 @@ def _get_device(explicit: Optional[str] = None) -> torch.device:
 
 def _load_model(model_path: str, device: torch.device) -> UNet:
     model = UNet()
-    state = torch.load(model_path, map_location=device)
-    # Handle both checkpoint dict (with 'model_state_dict') and plain state_dict
-    if isinstance(state, dict) and 'model_state_dict' in state:
-        state = state['model_state_dict']
-    model.load_state_dict(state)
+    checkpoint = torch.load(model_path, map_location=device)
+    # Handle both checkpoint dict (with 'model_state_dict' or 'state_dict') and plain state_dict
+    if isinstance(checkpoint, dict):
+        if 'model_state_dict' in checkpoint:
+            state = checkpoint['model_state_dict']
+        elif 'state_dict' in checkpoint:
+            state = checkpoint['state_dict']
+        else:
+            state = checkpoint
+    else:
+        state = checkpoint
+
+    # Adapt state dict: try to copy parameters, adapting shapes when possible
+    model_state = model.state_dict()
+    adapted_state = {}
+
+    def find_matching_key(src_key: str):
+        # Try exact key, then try with/without 'module.' prefix (DataParallel compat)
+        if src_key in model_state:
+            return src_key
+        mod_pref = 'module.' + src_key
+        if mod_pref in model_state:
+            return mod_pref
+        if src_key.startswith('module.'):
+            stripped = src_key[len('module.'):]
+            if stripped in model_state:
+                return stripped
+        return None
+
+    def adapt_tensor(src: torch.Tensor, target_shape: tuple) -> torch.Tensor:
+        # If shapes equal, return src
+        if tuple(src.shape) == tuple(target_shape):
+            return src
+        # If different number of dims, can't safely adapt; return None
+        if src.ndim != len(target_shape):
+            return None
+        # Create new tensor with target shape, filled with zeros (same dtype/device)
+        new = src.new_zeros(*target_shape)
+        # Determine slices to copy (copy along leading indices up to min size)
+        slices = tuple(slice(0, min(s, t)) for s, t in zip(src.shape, target_shape))
+        new[slices] = src[slices]
+        return new
+
+    for k, v in list(state.items()):
+        match = find_matching_key(k)
+        if match is None:
+            print(f"Skipping unmatched key in checkpoint: {k}")
+            continue
+        target_shape = tuple(model_state[match].shape)
+        try:
+            adapted = None
+            if tuple(v.shape) == target_shape:
+                adapted = v
+            else:
+                adapted = adapt_tensor(v, target_shape)
+            if adapted is None:
+                print(f"Cannot adapt key (dim mismatch): {k} -> {match} | checkpoint: {tuple(v.shape)} != model: {target_shape}")
+                continue
+            # Ensure dtype/device compatibility with model_state
+            adapted = adapted.to(model_state[match].device).type_as(model_state[match])
+            adapted_state[match] = adapted
+            if tuple(v.shape) != target_shape:
+                print(f"Adapted key: {k} -> {match} | {tuple(v.shape)} -> {target_shape}")
+        except Exception as e:
+            print(f"Failed to adapt key {k} -> {match}: {e}")
+            continue
+
+    # Load adapted state dict (non-strict to allow missing keys)
+    model.load_state_dict(adapted_state, strict=False)
     model.to(device)
     model.eval()
     return model
